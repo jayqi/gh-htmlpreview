@@ -1,5 +1,6 @@
 from collections.abc import Callable, Mapping, Sequence
 from email.message import Message
+import http.client
 import os
 import re
 import subprocess
@@ -162,13 +163,13 @@ class Client:
             return self._urlopen(request, TIMEOUT_SECONDS)
         except urllib.error.HTTPError:
             raise
-        except (urllib.error.URLError, OSError) as e:
+        except (OSError, http.client.HTTPException) as e:
             raise UpstreamError(f"Couldn't connect to {urlsplit(url).netloc}: {e}") from None
 
     def _read(self, response: Response, url: str) -> bytes:
         try:
             return response.read()
-        except OSError as e:
+        except (OSError, http.client.HTTPException) as e:
             raise UpstreamError(f"Couldn't read response from {url}: {e}") from None
 
     def _describe_http_error(self, error: urllib.error.HTTPError, url: str) -> str:

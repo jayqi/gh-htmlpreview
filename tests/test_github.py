@@ -1,4 +1,5 @@
 from email.message import Message
+import http.client
 import io
 import os
 import subprocess
@@ -281,7 +282,13 @@ def test_resolve_unexpected_response(body):
 
 @pytest.mark.parametrize(
     "error",
-    [urllib.error.URLError("no route"), TimeoutError("timed out"), ConnectionResetError()],
+    [
+        urllib.error.URLError("no route"),
+        TimeoutError("timed out"),
+        ConnectionResetError(),
+        http.client.BadStatusLine("garbage"),
+        http.client.LineTooLong("header line"),
+    ],
 )
 def test_resolve_connection_error(error):
     github = FakeGitHub()
@@ -369,10 +376,13 @@ def test_fetch_upstream_error(token):
         client.fetch("octo", "repo", SHA, "a.html")
 
 
-def test_fetch_read_error():
+@pytest.mark.parametrize(
+    "error", [ConnectionResetError("reset"), http.client.IncompleteRead(b"partial", 10)]
+)
+def test_fetch_read_error(error):
     class BrokenResponse(FakeResponse):
         def read(self) -> bytes:
-            raise ConnectionResetError("reset")
+            raise error
 
     response = BrokenResponse(b"", "text/html")
 
