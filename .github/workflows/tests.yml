@@ -1,0 +1,226 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 0 * * 0"
+  workflow_dispatch:
+    inputs:
+      upgrade:
+        description: Upgrade locked dependencies before running tests
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  code-quality:
+    name: Code quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: "1.55.0" # Keep in sync with minimum-version in justfile
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Check lockfile is up to date
+        run: uv lock --check
+
+      - name: Lint package
+        run: just lint
+
+  zizmor:
+    name: Zizmor audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          advanced-security: false
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-scopes: runtime, development, unknown
+
+  tests:
+    name: "Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})"
+    needs: code-quality
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: "1.55.0" # Keep in sync with minimum-version in justfile
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache-suffix: "tests-${{ matrix.os }}-${{ matrix.python-version }}"
+
+      - name: Upgrade locked dependencies
+        if: github.event_name == 'schedule' || inputs.upgrade
+        run: uv lock --upgrade
+
+      - name: Run static typechecking
+        run: just typecheck --python=${{ matrix.python-version }}
+
+      - name: Run tests
+        run: just test --python=${{ matrix.python-version }} -- -vv
+
+      - name: Rename coverage data file
+        shell: bash
+        run: mv .coverage ".coverage.${{ matrix.os }}-py${{ matrix.python-version }}"
+
+      - name: Upload coverage data
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-data-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: .coverage.*
+          include-hidden-files: true
+          if-no-files-found: error
+
+  coverage:
+    name: Coverage
+    needs: tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      total: ${{ steps.report.outputs.total }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Download coverage data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-data-*
+          merge-multiple: true
+
+      - name: Combine coverage data
+        run: uv run --only-group tests -- coverage combine
+
+      - name: Report coverage
+        id: report
+        run: |
+          uv run --only-group tests -- coverage report --show-missing
+          uv run --only-group tests -- coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+          uv run --only-group tests -- coverage html
+          uv run --only-group tests -- coverage json
+          total=$(uv run --only-group tests -- coverage report --format=total)
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+
+      - name: Upload HTML coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-html
+          path: htmlcov/
+
+      - name: Upload JSON coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-json
+          path: coverage.json
+
+      - name: Merge coverage data artifacts
+        uses: actions/upload-artifact/merge@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-data
+          pattern: coverage-data-*
+          include-hidden-files: true
+          delete-merged: true
+
+  coverage-badge:
+    name: Publish coverage badge
+    needs: coverage
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Push to the badges branch
+    steps:
+      - name: Push badge data to badges branch
+        env:
+          COVERAGE_TOTAL: ${{ needs.coverage.outputs.total }}
+          TOKEN: ${{ github.token }}
+        run: |
+          [[ $COVERAGE_TOTAL =~ ^[0-9]+$ ]] || { echo "Unexpected coverage total: '$COVERAGE_TOTAL'"; exit 1; }
+          main_sha=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)
+          if [[ "$main_sha" != "$GITHUB_SHA" ]]; then
+            echo "main has moved past ${GITHUB_SHA}; skipping badge update"
+            exit 0
+          fi
+          if (( COVERAGE_TOTAL >= 90 )); then color=brightgreen
+          elif (( COVERAGE_TOTAL >= 75 )); then color=yellow
+          else color=red
+          fi
+          git init --quiet --initial-branch=badges badges
+          cd badges
+          jq -n --arg message "${COVERAGE_TOTAL}%" --arg color "$color" \
+            '{schemaVersion: 1, label: "coverage", message: $message, color: $color}' > coverage.json
+          git add coverage.json
+          git -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit --quiet --message "Update coverage badge for ${GITHUB_SHA}"
+          git push --force --quiet "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
+
+  all-green:
+    name: All green
+    if: always()
+    needs: [code-quality, zizmor, dependency-review, tests, coverage]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+        with:
+          allowed-skips: dependency-review
+          jobs: ${{ toJSON(needs) }}
+
+  notify:
+    name: Notify failed build
+    needs: [code-quality, zizmor, tests, coverage, coverage-badge]
+    if: failure() && (github.event_name == 'push' || github.event_name == 'schedule')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: drivendataorg/failed-build-issue-action@940568ce50eeef3f31a920614cefcc6102d2f930 # v1.3.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
