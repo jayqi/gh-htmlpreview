@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Entry point for running as a GitHub CLI extension (gh htmlpreview).
+set -euo pipefail
+
+# gh extension install . symlinks the repository, so resolve symlinks to find it.
+source="${BASH_SOURCE[0]}"
+while [ -L "$source" ]; do
+    dir="$(cd -P "$(dirname "$source")" && pwd)"
+    source="$(readlink "$source")"
+    if [[ $source != /* ]]; then
+        source="$dir/$source"
+    fi
+done
+repo_dir="$(cd -P "$(dirname "$source")" && pwd)"
+
+if command -v uv >/dev/null 2>&1; then
+    # --system skips virtual environments, such as a project's .venv in the working directory.
+    # If no interpreter is found, uv run downloads one.
+    if python_path="$(uv python find --system '>=3.11' 2>/dev/null)"; then
+        run_python=("$python_path")
+    else
+        run_python=(uv run --no-project --python '>=3.11' -- python)
+    fi
+else
+    run_python=()
+    for candidate in python3 python; do
+        # The version check is valid Python 2, so an old interpreter fails it cleanly.
+        if command -v "$candidate" >/dev/null 2>&1 \
+            && "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1
+        then
+            run_python=("$candidate")
+            break
+        fi
+    done
+    if [ "${#run_python[@]}" -eq 0 ]; then
+        echo "gh htmlpreview: requires uv or Python 3.11 or newer on PATH." >&2
+        exit 1
+    fi
+fi
+
+exec "${run_python[@]}" -I -c '
+import sys
+sys.path.insert(0, sys.argv.pop(1))
+from gh_htmlpreview.cli import main
+main(sys.argv[1:], prog="gh htmlpreview")
+' "$repo_dir/src" "$@"
