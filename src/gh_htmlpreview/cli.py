@@ -3,7 +3,7 @@ from collections.abc import Sequence
 import re
 import sys
 
-from gh_htmlpreview import __version__
+from gh_htmlpreview import __version__, urls
 
 _DURATION_PATTERN = re.compile(r"(\d+(?:\.\d+)?)([smh]?)")
 _UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600}
@@ -73,6 +73,11 @@ def _parser(prog: str) -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None, prog: str = "gh-htmlpreview") -> None:
     """Run the gh-htmlpreview command-line program."""
     parser = _parser(prog)
-    parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    try:
+        urls.parse(args.url)
+    except ValueError as e:
+        forms = "\n".join(f"  {form}" for form in urls.ACCEPTED_FORMS)
+        parser.error(f"argument URL: {e}\nAccepted forms:\n{forms}")
     print(f"{prog}: not implemented yet", file=sys.stderr)
     sys.exit(1)

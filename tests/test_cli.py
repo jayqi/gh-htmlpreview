@@ -79,6 +79,16 @@ def test_invalid_arguments_exit_2(argv, capsys):
     assert "error:" in capsys.readouterr().err
 
 
+def test_unsupported_url(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        main(["https://github.com/octo/repo/tree/main/docs"], prog="gh htmlpreview")
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert err.startswith("usage: gh htmlpreview ")
+    assert "error: argument URL: Unsupported URL: " in err
+    assert "Accepted forms:\n  https://github.com/{owner}/{repo}/blob/{ref}/{path}\n" in err
+
+
 def test_not_implemented(capsys):
     with pytest.raises(SystemExit) as exc_info:
         main([URL, "--timeout", "90s", "--port", "8000", "--no-browser"])
