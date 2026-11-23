@@ -6,7 +6,7 @@ import re
 import sys
 from typing import NoReturn
 
-from gh_htmlpreview import __version__, github, urls
+from gh_htmlpreview import __version__, browser, github, urls
 from gh_htmlpreview.exceptions import NotFound, UpstreamError
 from gh_htmlpreview.server import HOST, PreviewServer
 
@@ -76,7 +76,15 @@ def _parser(prog: str) -> argparse.ArgumentParser:
 
 
 def open_browser(url: str) -> None:
-    """Open the URL in a browser. Not implemented yet."""
+    """Open the URL in a browser unless there's a reason not to. Failures are reported only."""
+    reason = browser.skip_reason()
+    if reason is not None:
+        print(reason, flush=True)
+        return
+    try:
+        browser.open_url(url)
+    except browser.LaunchError as e:
+        print(e, file=sys.stderr, flush=True)
 
 
 def main(argv: Sequence[str] | None = None, prog: str = "gh-htmlpreview") -> None:

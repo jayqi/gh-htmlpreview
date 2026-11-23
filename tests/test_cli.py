@@ -2,6 +2,7 @@ import argparse
 from collections import Counter
 import re
 import runpy
+import shlex
 import socket
 import sys
 import threading
@@ -254,3 +255,43 @@ def test_interrupted_while_serving(fake_github, browser, capsys, monkeypatch):
     monkeypatch.setattr(PreviewServer, "serve_until_idle", interrupt)
     main([TARGET_URL, "--no-browser"])
     assert capsys.readouterr().out.splitlines()[-1] == " Stopped."
+
+
+# Opening the browser
+
+
+@pytest.fixture
+def desktop(monkeypatch):
+    """Clear the environment variables that skip opening the browser."""
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.delenv("SSH_TTY", raising=False)
+    monkeypatch.setenv("DISPLAY", ":0")
+
+
+def test_browser_launcher(fake_github, desktop, capsys, monkeypatch):
+    visit = "import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=5).read()"
+    monkeypatch.setenv("GH_BROWSER", shlex.join([sys.executable, "-I", "-c", visit]))
+    main([TARGET_URL, "-t", "1"])
+    out, err = capsys.readouterr()
+    assert out.splitlines()[-1] == "No requests for 0:00:01. Stopped."
+    assert '"GET /docs/report.html HTTP/1.1" 200 -' in err
+
+
+def test_browser_launch_failure(fake_github, desktop, capsys, monkeypatch):
+    monkeypatch.setenv("GH_BROWSER", "/nonexistent/browser")
+    main([TARGET_URL, "-t", "0.2"])
+    out, err = capsys.readouterr()
+    assert out.splitlines()[-1] == "No requests for 0:00:00.200000. Stopped."
+    assert err.startswith("Couldn't run browser command '/nonexistent/browser': ")
+
+
+def test_browser_skipped(fake_github, capsys, monkeypatch):
+    monkeypatch.setenv("SSH_TTY", "/dev/pts/0")
+    monkeypatch.setenv("GH_BROWSER", "/nonexistent/browser")
+    main([TARGET_URL, "-t", "0.2"])
+    out, err = capsys.readouterr()
+    assert out.splitlines()[2:] == [
+        "Not opening a browser in an SSH session.",
+        "No requests for 0:00:00.200000. Stopped.",
+    ]
+    assert err == ""
