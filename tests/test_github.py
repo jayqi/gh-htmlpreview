@@ -1,103 +1,22 @@
-from email.message import Message
 import http.client
 import io
 import os
 import subprocess
-import urllib.error
-from urllib.parse import unquote, urlsplit
-import urllib.request
 
 import pytest
 
 from gh_htmlpreview import __version__
 from gh_htmlpreview.exceptions import NotFound, UpstreamError
-from gh_htmlpreview.github import Client, _SameHostAuthRedirectHandler, resolve_token
+from gh_htmlpreview.github import Client, Token, resolve_token
+from tests.fake_github import SHA, TOKEN, FakeGitHub, Transport, response
 
-SHA = "3f2c1a9d0e8b7c6a5f4e3d2c1b0a9f8e7d6c5b4a"
-TOKEN = "ghp_secret"
-
-
-class FakeResponse:
-    def __init__(self, body: bytes, content_type: str):
-        self.headers = Message()
-        self.headers["Content-Type"] = content_type
-        self._body = io.BytesIO(body)
-        self.closed = False
-
-    def read(self) -> bytes:
-        return self._body.read()
-
-    def close(self) -> None:
-        self.closed = True
+AUTH = Token(TOKEN, "GH_TOKEN")
+COMMITS_URL = "https://api.github.com/repos/octo/repo/commits"
 
 
-def http_error(url: str, code: int, headers: dict[str, str] | None = None):
-    message = Message()
-    for key, value in (headers or {}).items():
-        message[key] = value
-    return urllib.error.HTTPError(url, code, "error", message, io.BytesIO(b""))
-
-
-class FakeGitHub:
-    """Serves the commits API, the contents API and raw.githubusercontent.com for one repo."""
-
-    def __init__(self, refs=None, files=None, private=False):
-        self.refs = refs if refs is not None else {"main": SHA}
-        self.files = files if files is not None else {}
-        self.private = private
-        self.requests: list[urllib.request.Request] = []
-        self.responses: list[FakeResponse] = []
-        self.error: Exception | None = None
-
-    def __call__(self, request: urllib.request.Request, timeout: float) -> FakeResponse:
-        self.requests.append(request)
-        if self.error is not None:
-            raise self.error
-        url = request.full_url
-        parts = urlsplit(url)
-        authorized = request.get_header("Authorization") == f"Bearer {TOKEN}"
-        if parts.netloc == "api.github.com":
-            prefix = "/repos/octo/repo/"
-            if not parts.path.startswith(prefix) or (self.private and not authorized):
-                raise http_error(url, 404)
-            kind, _, rest = parts.path.removeprefix(prefix).partition("/")
-            if kind == "commits":
-                ref = unquote(rest)
-                if ref.startswith(("refs/heads/", "refs/tags/")):
-                    ref = ref.split("/", 2)[2]
-                if ref not in self.refs:
-                    raise http_error(url, 422)
-                return self._respond(self.refs[ref].encode(), "application/vnd.github.sha")
-            if kind == "contents":
-                assert parts.query == f"ref={SHA}"
-                return self._file(url, unquote(rest), "application/vnd.github.raw+json")
-        if parts.netloc == "raw.githubusercontent.com":
-            prefix = f"/octo/repo/{SHA}/"
-            if not parts.path.startswith(prefix) or self.private:
-                raise http_error(url, 404)
-            return self._file(url, unquote(parts.path.removeprefix(prefix)), "text/plain")
-        raise AssertionError(f"Unexpected URL {url}")
-
-    def _file(self, url: str, path: str, content_type: str) -> FakeResponse:
-        if path in self.files:
-            return self._respond(self.files[path], content_type)
-        if any(p.startswith(f"{path}/") for p in self.files):
-            if urlsplit(url).netloc == "raw.githubusercontent.com":
-                raise http_error(url, 404)
-            return self._respond(b"[]", "application/json")
-        raise http_error(url, 404)
-
-    def _respond(self, body: bytes, content_type: str) -> FakeResponse:
-        response = FakeResponse(body, content_type)
-        self.responses.append(response)
-        return response
-
-    def urls(self) -> list[str]:
-        return [r.full_url for r in self.requests]
-
-
-def headers(request: urllib.request.Request) -> dict[str, str]:
-    return {k.lower(): v for k, v in request.header_items()}
+def headers(request) -> dict[str, str]:
+    """A request's headers, except Host, which urllib adds."""
+    return {k.lower(): v for k, v in request.header_items() if k.lower() != "host"}
 
 
 # Token resolution
@@ -119,9 +38,9 @@ def fake_run(returncode=0, stdout=f"{TOKEN}\n", error: Exception | None = None):
 @pytest.mark.parametrize(
     ("env", "expected"),
     [
-        ({"GH_TOKEN": "a", "GITHUB_TOKEN": "b"}, "a"),
-        ({"GITHUB_TOKEN": "b"}, "b"),
-        ({"GH_TOKEN": "", "GITHUB_TOKEN": " b "}, "b"),
+        ({"GH_TOKEN": "a", "GITHUB_TOKEN": "b"}, Token("a", "GH_TOKEN")),
+        ({"GITHUB_TOKEN": "b"}, Token("b", "GITHUB_TOKEN")),
+        ({"GH_TOKEN": "", "GITHUB_TOKEN": " b "}, Token("b", "GITHUB_TOKEN")),
     ],
 )
 def test_resolve_token_from_env(env, expected):
@@ -132,7 +51,7 @@ def test_resolve_token_from_env(env, expected):
 
 def test_resolve_token_from_gh():
     run = fake_run()
-    assert resolve_token({"GH_TOKEN": "  "}, run) == TOKEN
+    assert resolve_token({"GH_TOKEN": "  "}, run) == Token(TOKEN, "gh auth")
     assert run.calls == [["gh", "auth", "token", "--hostname", "github.com"]]
 
 
@@ -155,21 +74,21 @@ def test_resolve_token_from_gh_on_path(tmp_path, monkeypatch):
     gh.write_text('#!/bin/sh\n[ "$*" = "auth token --hostname github.com" ] && echo from-gh\n')
     gh.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
-    assert resolve_token({}) == "from-gh"
+    assert resolve_token({}) == Token("from-gh", "gh auth")
 
 
 # Ref resolution
 
 
-@pytest.mark.parametrize("token", [TOKEN, None])
+@pytest.mark.parametrize("token", [AUTH, None])
 def test_resolve(token):
     github = FakeGitHub()
-    client = Client(token, urlopen=github)
+    client = Client(token, github)
     assert client.resolve("octo", "repo", ["main", "docs", "index.html"]) == (
         SHA,
         "docs/index.html",
     )
-    assert github.urls() == ["https://api.github.com/repos/octo/repo/commits/main"]
+    assert github.urls() == [f"{COMMITS_URL}/main"]
     (request,) = github.requests
     expected = {
         "accept": "application/vnd.github.sha",
@@ -184,44 +103,64 @@ def test_resolve(token):
 
 def test_resolve_branch_with_slashes():
     github = FakeGitHub(refs={"feature/new/ui": SHA})
-    client = Client(TOKEN, urlopen=github)
+    client = Client(AUTH, github)
     segments = ["feature", "new", "ui", "docs", "index.html"]
     assert client.resolve("octo", "repo", segments) == (SHA, "docs/index.html")
     assert github.urls() == [
-        "https://api.github.com/repos/octo/repo/commits/feature",
-        "https://api.github.com/repos/octo/repo/commits/feature/new",
-        "https://api.github.com/repos/octo/repo/commits/feature/new/ui",
+        f"{COMMITS_URL}/feature",
+        f"{COMMITS_URL}/feature/new",
+        f"{COMMITS_URL}/feature/new/ui",
     ]
 
 
 def test_resolve_shortest_match_first():
     github = FakeGitHub(refs={"v1": SHA, "v1/docs": "0" * 40})
-    client = Client(TOKEN, urlopen=github)
+    client = Client(AUTH, github)
     assert client.resolve("octo", "repo", ["v1", "docs", "a.html"]) == (SHA, "docs/a.html")
 
 
 @pytest.mark.parametrize("kind", ["heads", "tags"])
 def test_resolve_qualified_ref(kind):
     github = FakeGitHub(refs={"feature/x": SHA})
-    client = Client(TOKEN, urlopen=github)
+    client = Client(AUTH, github)
     segments = ["refs", kind, "feature", "x", "a.html"]
     assert client.resolve("octo", "repo", segments) == (SHA, "a.html")
     assert github.urls() == [
-        f"https://api.github.com/repos/octo/repo/commits/refs/{kind}/feature",
-        f"https://api.github.com/repos/octo/repo/commits/refs/{kind}/feature/x",
+        f"{COMMITS_URL}/refs/{kind}/feature",
+        f"{COMMITS_URL}/refs/{kind}/feature/x",
     ]
+
+
+def test_resolve_full_sha():
+    github = FakeGitHub()
+    client = Client(AUTH, github)
+    assert client.resolve("octo", "repo", [SHA, "a.html"]) == (SHA, "a.html")
+    assert github.urls() == [f"{COMMITS_URL}/{SHA}"]
+
+
+def test_resolve_branch_starting_with_sha_prefix():
+    github = FakeGitHub(refs={"main": "2024" + "e" * 36, "2024/report": SHA})
+    client = Client(AUTH, github)
+    assert client.resolve("octo", "repo", ["2024", "report", "a.html"]) == (SHA, "a.html")
+
+
+def test_resolve_short_sha():
+    github = FakeGitHub()
+    client = Client(AUTH, github)
+    with pytest.raises(NotFound, match="No branch, tag or commit in octo/repo matches"):
+        client.resolve("octo", "repo", [SHA[:7], "a.html"])
 
 
 def test_resolve_quotes_segments():
     github = FakeGitHub(refs={"a b#c?": SHA})
-    client = Client(TOKEN, urlopen=github)
+    client = Client(AUTH, github)
     assert client.resolve("octo", "repo", ["a b#c?", "my file.html"]) == (SHA, "my file.html")
-    assert github.urls() == ["https://api.github.com/repos/octo/repo/commits/a%20b%23c%3F"]
+    assert github.urls() == [f"{COMMITS_URL}/a%20b%23c%3F"]
 
 
 def test_resolve_no_matching_ref():
     github = FakeGitHub(refs={})
-    client = Client(TOKEN, urlopen=github)
+    client = Client(AUTH, github)
     with pytest.raises(NotFound, match="No branch, tag or commit in octo/repo matches"):
         client.resolve("octo", "repo", ["a", "b", "c.html"])
     assert len(github.requests) == 2
@@ -229,16 +168,18 @@ def test_resolve_no_matching_ref():
 
 def test_resolve_repository_not_found_stops():
     github = FakeGitHub(private=True)
-    client = Client("token-without-access", urlopen=github)
+    client = Client(Token("token-without-access", "GITHUB_TOKEN"), github)
     with pytest.raises(NotFound) as exc_info:
         client.resolve("octo", "repo", ["feature", "x", "a.html"])
-    assert str(exc_info.value) == "Repository octo/repo not found."
+    assert str(exc_info.value) == (
+        "Repository octo/repo not found, or the token from GITHUB_TOKEN can't access it."
+    )
     assert len(github.requests) == 1
 
 
 def test_resolve_repository_not_found_unauthenticated_hint():
     github = FakeGitHub(private=True)
-    client = Client(None, urlopen=github)
+    client = Client(None, github)
     with pytest.raises(NotFound) as exc_info:
         client.resolve("octo", "repo", ["main", "a.html"])
     assert str(exc_info.value) == (
@@ -249,51 +190,66 @@ def test_resolve_repository_not_found_unauthenticated_hint():
 
 def test_resolve_private_repository_authenticated():
     github = FakeGitHub(private=True)
-    client = Client(TOKEN, urlopen=github)
+    client = Client(AUTH, github)
     assert client.resolve("octo", "repo", ["main", "a.html"]) == (SHA, "a.html")
 
 
+SAML_MESSAGE = "Resource protected by organization SAML enforcement."
+
+
 @pytest.mark.parametrize(
-    ("code", "error_headers", "token", "message"),
+    ("code", "error_headers", "body", "token", "message"),
     [
-        (500, {}, TOKEN, "GitHub returned HTTP 500 for https://api.github.com/"),
-        (403, {}, TOKEN, "GitHub returned HTTP 403 for https://api.github.com/"),
-        (403, {"x-ratelimit-remaining": "0"}, TOKEN, "^GitHub rate limit exceeded.$"),
-        (429, {"retry-after": "60"}, TOKEN, "^GitHub rate limit exceeded.$"),
-        (403, {"x-ratelimit-remaining": "0"}, None, "rate limit exceeded. Run 'gh auth login'"),
+        (500, {}, b"", AUTH, f"GitHub returned HTTP 500 for {COMMITS_URL}/main"),
+        (
+            403,
+            {},
+            f'{{"message": "{SAML_MESSAGE}"}}'.encode(),
+            AUTH,
+            f"GitHub returned HTTP 403 for {COMMITS_URL}/main: {SAML_MESSAGE}",
+        ),
+        (403, {}, b"<html>", AUTH, f"GitHub returned HTTP 403 for {COMMITS_URL}/main"),
+        (
+            401,
+            {},
+            b'{"message": "Bad credentials"}',
+            AUTH,
+            "GitHub rejected the token from GH_TOKEN: Bad credentials",
+        ),
+        (403, {"x-ratelimit-remaining": "0"}, b"", AUTH, "GitHub rate limit exceeded."),
+        (429, {"retry-after": "60"}, b"", AUTH, "GitHub rate limit exceeded."),
+        (
+            403,
+            {"x-ratelimit-remaining": "0"},
+            b"",
+            None,
+            "GitHub rate limit exceeded. Run 'gh auth login' or set GH_TOKEN for a higher limit.",
+        ),
     ],
+    ids=["500", "403 json", "403 not json", "401", "rate limit", "retry after", "no token"],
 )
-def test_resolve_upstream_error(code, error_headers, token, message):
-    github = FakeGitHub()
-    github.error = http_error("https://api.github.com/x", code, error_headers)
-    client = Client(token, urlopen=github)
-    with pytest.raises(UpstreamError, match=message):
-        client.resolve("octo", "repo", ["main", "a.html"])
-    assert len(github.requests) == 1
+def test_resolve_upstream_error(code, error_headers, body, token, message):
+    transport = Transport(lambda r: response(r.full_url, code, body, error_headers))
+    client = Client(token, transport)
+    with pytest.raises(UpstreamError) as exc_info:
+        client.resolve("octo", "repo", ["main", "docs", "a.html"])
+    assert str(exc_info.value) == message
+    assert len(transport.requests) == 1
 
 
 @pytest.mark.parametrize("body", [b"", b"<html>", b"3F2C1A9D0E8B7C6A5F4E3D2C1B0A9F8E7D6C5B4A"])
 def test_resolve_unexpected_response(body):
     github = FakeGitHub(refs={"main": body.decode()})
-    client = Client(TOKEN, urlopen=github)
+    client = Client(AUTH, github)
     with pytest.raises(UpstreamError, match="Unexpected response"):
         client.resolve("octo", "repo", ["main", "a.html"])
 
 
-@pytest.mark.parametrize(
-    "error",
-    [
-        urllib.error.URLError("no route"),
-        TimeoutError("timed out"),
-        ConnectionResetError(),
-        http.client.BadStatusLine("garbage"),
-        http.client.LineTooLong("header line"),
-    ],
-)
+@pytest.mark.parametrize("error", [ConnectionResetError("reset"), http.client.BadStatusLine("x")])
 def test_resolve_connection_error(error):
     github = FakeGitHub()
     github.error = error
-    client = Client(TOKEN, urlopen=github)
+    client = Client(AUTH, github)
     with pytest.raises(UpstreamError, match="Couldn't connect to api.github.com"):
         client.resolve("octo", "repo", ["main", "a.html"])
 
@@ -303,13 +259,12 @@ def test_resolve_connection_error(error):
 
 def test_fetch_authenticated():
     github = FakeGitHub(files={"docs/my report.html": b"<html>"})
-    client = Client(TOKEN, urlopen=github)
+    client = Client(AUTH, github)
     assert client.fetch("octo", "repo", SHA, "docs/my report.html") == b"<html>"
-    (request,) = github.requests
-    assert request.full_url == (
+    assert github.urls() == [
         f"https://api.github.com/repos/octo/repo/contents/docs/my%20report.html?ref={SHA}"
-    )
-    assert headers(request) == {
+    ]
+    assert headers(github.requests[0]) == {
         "accept": "application/vnd.github.raw+json",
         "authorization": f"Bearer {TOKEN}",
         "user-agent": f"gh-htmlpreview/{__version__}",
@@ -320,32 +275,34 @@ def test_fetch_authenticated():
 
 def test_fetch_unauthenticated():
     github = FakeGitHub(files={"docs/my report.html": b"<html>"})
-    client = Client(None, urlopen=github)
+    client = Client(None, github)
     assert client.fetch("octo", "repo", SHA, "docs/my report.html") == b"<html>"
-    (request,) = github.requests
-    assert request.full_url == (
+    assert github.urls() == [
         f"https://raw.githubusercontent.com/octo/repo/{SHA}/docs/my%20report.html"
-    )
-    assert headers(request) == {"accept": "*/*", "user-agent": f"gh-htmlpreview/{__version__}"}
+    ]
+    assert headers(github.requests[0]) == {
+        "accept": "*/*",
+        "user-agent": f"gh-htmlpreview/{__version__}",
+    }
 
 
 def test_fetch_json_file_authenticated():
     github = FakeGitHub(files={"data.json": b"[]"})
-    client = Client(TOKEN, urlopen=github)
+    client = Client(AUTH, github)
     assert client.fetch("octo", "repo", SHA, "data.json") == b"[]"
 
 
-@pytest.mark.parametrize("token", [TOKEN, None])
+@pytest.mark.parametrize("token", [AUTH, None])
 def test_fetch_not_found(token):
     github = FakeGitHub(files={"a.html": b""})
-    client = Client(token, urlopen=github)
+    client = Client(token, github)
     with pytest.raises(NotFound, match="^b.html not found in octo/repo at 3f2c1a9.$"):
         client.fetch("octo", "repo", SHA, "b.html")
 
 
 def test_fetch_directory_authenticated():
     github = FakeGitHub(files={"docs/a.html": b""})
-    client = Client(TOKEN, urlopen=github)
+    client = Client(AUTH, github)
     with pytest.raises(NotFound, match="^docs is a directory in octo/repo, not a file.$"):
         client.fetch("octo", "repo", SHA, "docs")
     assert all(r.closed for r in github.responses)
@@ -353,25 +310,25 @@ def test_fetch_directory_authenticated():
 
 def test_fetch_directory_unauthenticated():
     github = FakeGitHub(files={"docs/a.html": b""})
-    client = Client(None, urlopen=github)
+    client = Client(None, github)
     with pytest.raises(NotFound, match="^docs not found"):
         client.fetch("octo", "repo", SHA, "docs")
 
 
-@pytest.mark.parametrize("path", ["", "/", "//"])
-def test_fetch_empty_path(path):
+@pytest.mark.parametrize("path", ["", "/", "../x.html", "docs/./a.html", "a/.."])
+def test_fetch_invalid_path(path):
     github = FakeGitHub()
-    client = Client(TOKEN, urlopen=github)
-    with pytest.raises(NotFound):
+    client = Client(AUTH, github)
+    with pytest.raises(NotFound) as exc_info:
         client.fetch("octo", "repo", SHA, path)
+    assert str(exc_info.value) == f"Invalid file path {path!r}."
     assert github.requests == []
 
 
-@pytest.mark.parametrize("token", [TOKEN, None])
+@pytest.mark.parametrize("token", [AUTH, None])
 def test_fetch_upstream_error(token):
-    github = FakeGitHub()
-    github.error = http_error("https://example/x", 502)
-    client = Client(token, urlopen=github)
+    transport = Transport(lambda r: response(r.full_url, 502))
+    client = Client(token, transport)
     with pytest.raises(UpstreamError, match="GitHub returned HTTP 502"):
         client.fetch("octo", "repo", SHA, "a.html")
 
@@ -380,56 +337,41 @@ def test_fetch_upstream_error(token):
     "error", [ConnectionResetError("reset"), http.client.IncompleteRead(b"partial", 10)]
 )
 def test_fetch_read_error(error):
-    class BrokenResponse(FakeResponse):
-        def read(self) -> bytes:
+    class BrokenBody(io.BytesIO):
+        def read(self, *args):
             raise error
 
-    response = BrokenResponse(b"", "text/html")
-
-    def urlopen(request, timeout):
-        return response
-
-    client = Client(TOKEN, urlopen=urlopen)
+    transport = Transport(lambda r: response(r.full_url, body=BrokenBody()))
+    client = Client(AUTH, transport)
     with pytest.raises(UpstreamError, match="Couldn't read response"):
         client.fetch("octo", "repo", SHA, "a.html")
-    assert response.closed
-
-
-def test_token_only_sent_to_api():
-    github = FakeGitHub(files={"a.html": b"<html>"})
-    Client(None, urlopen=github).fetch("octo", "repo", SHA, "a.html")
-    client = Client(TOKEN, urlopen=github)
-    client.resolve("octo", "repo", ["main", "a.html"])
-    client.fetch("octo", "repo", SHA, "a.html")
-    for request in github.requests:
-        if request.get_header("Authorization") is not None:
-            assert urlsplit(request.full_url).netloc == "api.github.com"
-    assert sum(r.get_header("Authorization") is not None for r in github.requests) == 2
+    assert transport.responses[0].closed
 
 
 # Redirects
 
 
 @pytest.mark.parametrize(
-    ("new_url", "keeps_auth"),
+    ("location", "keeps_auth"),
     [
-        ("https://api.github.com/repositories/1/contents/a.html", True),
-        ("https://raw.githubusercontent.com/octo/repo/main/a.html", False),
-        ("http://api.github.com/repositories/1/contents/a.html", False),
-        ("https://api.github.com.evil.example/a.html", False),
+        ("https://api.github.com/repositories/1/commits/main", True),
+        ("https://example.com/commits/main", False),
+        ("http://api.github.com/repositories/1/commits/main", False),
+        ("https://api.github.com.evil.example/commits/main", False),
     ],
 )
-def test_redirect_authorization(new_url, keeps_auth):
-    request = urllib.request.Request("https://api.github.com/repos/octo/repo/contents/a.html")
-    request.add_unredirected_header("Authorization", f"Bearer {TOKEN}")
-    request.add_header("Accept", "application/vnd.github.raw+json")
-    new = _SameHostAuthRedirectHandler().redirect_request(
-        request, None, 301, "Moved", Message(), new_url
-    )
-    assert new is not None
-    assert new.full_url == new_url
-    assert new.get_header("Accept") == "application/vnd.github.raw+json"
-    assert new.get_header("Authorization") == (f"Bearer {TOKEN}" if keeps_auth else None)
+def test_redirect_authorization(location, keeps_auth):
+    def respond(request):
+        if request.full_url == location:
+            return response(location, body=SHA.encode())
+        return response(request.full_url, 301, headers={"Location": location})
+
+    transport = Transport(respond)
+    client = Client(AUTH, transport)
+    assert client.resolve("octo", "repo", ["main", "a.html"]) == (SHA, "a.html")
+    assert transport.urls() == [f"{COMMITS_URL}/main", location]
+    expected = f"Bearer {TOKEN}" if keeps_auth else None
+    assert transport.requests[1].get_header("Authorization") == expected
 
 
 # Live GitHub

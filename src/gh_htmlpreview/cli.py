@@ -25,6 +25,8 @@ def parse_duration(value: str) -> float:
     seconds = float(match.group(1)) * _UNIT_SECONDS[match.group(2)]
     if seconds <= 0:
         raise argparse.ArgumentTypeError(f"Duration must be positive, got {value!r}.")
+    if seconds > timedelta.max.total_seconds():
+        raise argparse.ArgumentTypeError(f"Duration is too long, got {value!r}.")
     return seconds
 
 
@@ -76,13 +78,15 @@ def _parser(prog: str) -> argparse.ArgumentParser:
 
 
 def open_browser(url: str) -> None:
-    """Open the URL in a browser unless there's a reason not to. Failures are reported only."""
-    reason = browser.skip_reason()
-    if reason is not None:
+    """Open the URL with the configured browser command, or the default browser unless
+    there's a reason not to. Failures are reported only.
+    """
+    launcher = browser.resolve_launcher()
+    if launcher is None and (reason := browser.skip_reason(url)) is not None:
         print(reason, flush=True)
         return
     try:
-        browser.open_url(url)
+        browser.open_url(url, launcher)
     except browser.LaunchError as e:
         print(e, file=sys.stderr, flush=True)
 
@@ -122,9 +126,9 @@ def main(argv: Sequence[str] | None = None, prog: str = "gh-htmlpreview") -> Non
     with server:
         print(f"Serving {owner}/{repo}@{sha[:7]}:{path} at {server.url}")
         print(f"Shutting down after {timeout} without requests. Press Ctrl-C to stop.", flush=True)
-        if not args.no_browser:
-            open_browser(server.url)
         try:
+            if not args.no_browser:
+                open_browser(server.url)
             server.serve_until_idle(args.timeout)
             print(f"No requests for {timeout}. Stopped.")
         except KeyboardInterrupt:

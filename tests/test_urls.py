@@ -68,6 +68,7 @@ def test_parse(url, segments):
         ("https://github.com/my-org/my.repo_name/blob/main/a.html", "my-org", "my.repo_name"),
         ("https://github.com/a1/.github/blob/main/a.html", "a1", ".github"),
         ("https://raw.githubusercontent.com/X/Y/main/a.html", "X", "Y"),
+        ("https://github.com/octo_acme/repo/blob/main/a.html", "octo_acme", "repo"),
     ],
 )
 def test_parse_owner_and_repo(url, owner, repo):
@@ -102,11 +103,6 @@ def test_parse_owner_and_repo(url, owner, repo):
         ("https://github.com/octo/repo/blob/main/../a.html", "Unsupported URL"),
         ("https://github.com/octo/repo/blob/main/./a.html", "Unsupported URL"),
         ("https://github.com/octo/repo/blob/main/%2E%2E/a.html", "Unsupported URL"),
-        # Invalid owner or repository
-        ("https://github.com/-octo/repo/blob/main/a.html", "Invalid repository owner"),
-        ("https://github.com/octo_x/repo/blob/main/a.html", "Invalid repository owner"),
-        ("https://github.com/octo/re%3Fpo/blob/main/a.html", "Invalid repository name"),
-        ("https://raw.githubusercontent.com/octo/re%23po/main/a.html", "Invalid repository name"),
     ],
 )
 def test_parse_invalid(url, message):

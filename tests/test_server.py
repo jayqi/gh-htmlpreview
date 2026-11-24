@@ -1,6 +1,7 @@
 from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
+import errno
 import http.client
 import socket
 import threading
@@ -69,7 +70,7 @@ def request(
     host: str | None = "default",
     timeout: float = 10,
 ) -> tuple[int, dict[str, str], bytes]:
-    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=timeout)
+    conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=timeout)
     try:
         conn.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
         if host is not None:
@@ -87,7 +88,7 @@ def test_target_file(server):
     status, headers, body = request(server, "/docs/report.html")
     assert status == 200
     assert body == FILES["docs/report.html"]
-    assert headers["content-type"] == "text/html"
+    assert headers["content-type"] == "text/html; charset=utf-8"
     assert headers["content-length"] == str(len(body))
 
 
@@ -211,8 +212,20 @@ def test_forbidden_hosts(server, source, host, method):
     host = host if host is None else host.format(port=server.port, other=server.port + 1)
     status, _, body = request(server, "/docs/style.css", method=method, host=host)
     assert status == 403
-    assert body == (b"" if method == "HEAD" else b"Forbidden host.\n")
+    expected = f"Forbidden host. Open http://127.0.0.1:{server.port}/ instead.\n".encode()
+    assert body == (b"" if method == "HEAD" else expected)
     assert source.calls == Counter()
+
+
+def test_bare_host_on_port_80(source):
+    class Port80Server(PreviewServer):
+        @property
+        def port(self) -> int:
+            return 80
+
+    with running(Port80Server(source, TARGET)) as server:
+        status, _, _ = request(server, "/docs/report.html", host="127.0.0.1")
+    assert status == 200
 
 
 @pytest.mark.parametrize("site", ["same-origin", "none", None])
@@ -257,15 +270,19 @@ def test_absolute_form_request_rejected(server, source):
 @pytest.mark.parametrize(
     ("path", "expected"),
     [
-        ("a.html", "text/html"),
-        ("a.HTM", "text/html"),
-        ("a.js", "text/javascript"),
-        ("a.mjs", "text/javascript"),
-        ("a.css", "text/css"),
+        ("a.html", "text/html; charset=utf-8"),
+        ("a.HTM", "text/html; charset=utf-8"),
+        ("a.js", "text/javascript; charset=utf-8"),
+        ("a.mjs", "text/javascript; charset=utf-8"),
+        ("a.css", "text/css; charset=utf-8"),
+        ("a.txt", "text/plain; charset=utf-8"),
+        ("a.csv", "text/csv; charset=utf-8"),
         ("a.json", "application/json"),
         ("a.svg", "image/svg+xml"),
         ("a.wasm", "application/wasm"),
         ("a.png", "image/png"),
+        ("data.json.gz", "application/octet-stream"),
+        ("report.html.gz", "application/octet-stream"),
         ("a.unknownext", "application/octet-stream"),
         ("Makefile", "application/octet-stream"),
     ],
@@ -344,9 +361,23 @@ def test_fixed_port(source):
         assert request(server, "/docs/report.html")[0] == 200
 
 
-def test_fixed_port_in_use(server, source):
-    with pytest.raises(OSError):
-        PreviewServer(source, TARGET, port=server.port)
+@pytest.mark.parametrize(
+    ("family", "address"),
+    [(socket.AF_INET, "127.0.0.1"), (socket.AF_INET, "0.0.0.0"), (socket.AF_INET6, "::")],
+    ids=["127.0.0.1", "0.0.0.0", "::"],
+)
+def test_fixed_port_in_use(source, family, address):
+    """Any listener that receives 127.0.0.1 traffic on the port makes it unavailable."""
+    if family == socket.AF_INET6 and not socket.has_ipv6:
+        pytest.skip("IPv6 not available")
+    with socket.socket(family, socket.SOCK_STREAM) as other:
+        if family == socket.AF_INET6:
+            other.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        other.bind((address, 0))
+        other.listen()
+        with pytest.raises(OSError) as exc_info:
+            PreviewServer(source, TARGET, port=other.getsockname()[1])
+    assert exc_info.value.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", None))
 
 
 # Idle shutdown
@@ -411,7 +442,12 @@ def test_request_in_progress_delays_idle_shutdown():
     server.server_close()
 
 
-def test_refused_requests_dont_delay_idle_shutdown(source):
+@pytest.mark.parametrize(
+    "refused",
+    [{"host": "evil.example"}, {"headers": {"Service-Worker": "script"}}],
+    ids=["forbidden host", "service worker"],
+)
+def test_refused_requests_dont_delay_idle_shutdown(source, refused):
     server = PreviewServer(source, TARGET)
     shutdown = threading.Event()
 
@@ -424,7 +460,7 @@ def test_refused_requests_dont_delay_idle_shutdown(source):
     thread.start()
     while not shutdown.wait(0.1) and time.monotonic() - start < 5:
         try:
-            request(server, "/docs/report.html", host="evil.example", timeout=0.5)
+            request(server, "/docs/report.html", timeout=0.5, **refused)
         except OSError:
             pass
     assert shutdown.is_set()

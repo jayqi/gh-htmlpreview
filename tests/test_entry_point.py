@@ -149,7 +149,7 @@ exec '{PYTHON}' "$@"
     assert result.stdout.strip() == VERSION
     calls = log.read_text().splitlines()
     assert calls[0] == "python find --system >=3.11"
-    assert calls[1].startswith("run --no-project --python >=3.11 -- python -I -c ")
+    assert calls[1].startswith("run --no-project --isolated --python >=3.11 -- python -I -c ")
 
 
 def test_installed_repository_symlink(python_bin_dir, tmp_path):

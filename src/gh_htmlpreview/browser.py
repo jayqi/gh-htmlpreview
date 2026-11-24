@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 from typing import Protocol
+from urllib.parse import urlsplit
 import webbrowser
 
 
@@ -16,10 +17,17 @@ class LaunchError(Exception):
     """The browser couldn't be launched."""
 
 
-def skip_reason(env: Mapping[str, str] = os.environ, platform: str = sys.platform) -> str | None:
-    """Explain why a browser shouldn't be opened, or return None if it should."""
+def skip_reason(
+    url: str, env: Mapping[str, str] = os.environ, platform: str = sys.platform
+) -> str | None:
+    """Explain why the default browser shouldn't be opened, or return None if it should."""
     if env.get("SSH_CONNECTION") or env.get("SSH_TTY"):
-        return "Not opening a browser in an SSH session."
+        port = urlsplit(url).port
+        return (
+            "Not opening a browser in an SSH session. To view it from your machine, forward "
+            f"the port with 'ssh -L {port}:127.0.0.1:{port} HOST' and open the URL above. "
+            "Use -p to keep the same port."
+        )
     if platform.startswith("linux") and not (env.get("DISPLAY") or env.get("WAYLAND_DISPLAY")):
         return "Not opening a browser because neither DISPLAY nor WAYLAND_DISPLAY is set."
     return None
@@ -51,16 +59,14 @@ def resolve_launcher(
 
 def open_url(
     url: str,
-    env: Mapping[str, str] = os.environ,
-    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    launcher: str | None,
     popen: Callable[..., Process] = subprocess.Popen,
     default: Callable[[str], bool] = webbrowser.open,
 ) -> None:
-    """Open the URL with the configured browser command, or the system default browser.
+    """Open the URL with a browser command, or the system default browser if it's None.
 
     A browser command is started without waiting for it to exit.
     """
-    launcher = resolve_launcher(env, run)
     if launcher is None:
         try:
             opened = default(url)

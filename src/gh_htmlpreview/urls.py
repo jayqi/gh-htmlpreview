@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-import re
 from urllib.parse import unquote, urlsplit
 
 ACCEPTED_FORMS = (
@@ -7,9 +6,6 @@ ACCEPTED_FORMS = (
     "https://github.com/{owner}/{repo}/raw/{ref}/{path}",
     "https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}",
 )
-
-_OWNER_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")
-_REPO_PATTERN = re.compile(r"[A-Za-z0-9._-]+")
 
 
 @dataclass(frozen=True)
@@ -41,8 +37,4 @@ def parse(url: str) -> FileURL:
 
     if len(rest) < 2:
         raise ValueError(f"URL doesn't include both a ref and a file path: {url!r}")
-    if not _OWNER_PATTERN.fullmatch(owner):
-        raise ValueError(f"Invalid repository owner {owner!r} in URL: {url!r}")
-    if not _REPO_PATTERN.fullmatch(repo):
-        raise ValueError(f"Invalid repository name {repo!r} in URL: {url!r}")
     return FileURL(owner=owner, repo=repo, segments=tuple(rest))

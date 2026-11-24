@@ -24,13 +24,21 @@ URL = "http://127.0.0.1:8000/index.html"
     ],
 )
 def test_skip_reason(env, platform, expected):
-    reason = skip_reason(env, platform)
+    reason = skip_reason(URL, env, platform)
     if expected is None:
         assert reason is None
     else:
         assert reason is not None
         assert reason.startswith("Not opening a browser ")
         assert expected in reason
+
+
+def test_skip_reason_ssh_forwarding_hint():
+    assert skip_reason(URL, {"SSH_TTY": "/dev/pts/0"}, "linux") == (
+        "Not opening a browser in an SSH session. To view it from your machine, forward the "
+        "port with 'ssh -L 8000:127.0.0.1:8000 HOST' and open the URL above. "
+        "Use -p to keep the same port."
+    )
 
 
 def fake_run(stdout="", returncode=0, error=None):
@@ -120,7 +128,7 @@ class FakeDefault:
 )
 def test_open_url_launcher(launcher, expected_args):
     popen, default = FakePopen(), FakeDefault()
-    open_url(URL, {"GH_BROWSER": launcher}, fake_run(), popen, default)
+    open_url(URL, launcher, popen, default)
     assert popen.calls == [
         (expected_args, {"stdin": subprocess.DEVNULL, "start_new_session": True})
     ]
@@ -129,29 +137,29 @@ def test_open_url_launcher(launcher, expected_args):
 
 def test_open_url_default():
     popen, default = FakePopen(), FakeDefault()
-    open_url(URL, {}, fake_run(), popen, default)
+    open_url(URL, None, popen, default)
     assert popen.calls == []
     assert default.calls == [URL]
 
 
 @pytest.mark.parametrize(
-    ("env", "popen", "default", "message"),
+    ("launcher", "popen", "default", "message"),
     [
         (
-            {"GH_BROWSER": "firefox 'unclosed"},
+            "firefox 'unclosed",
             FakePopen(),
             FakeDefault(),
             "Couldn't parse browser command \"firefox 'unclosed\": No closing quotation.",
         ),
         (
-            {"BROWSER": "nobrowser --new"},
+            "nobrowser --new",
             FakePopen(FileNotFoundError(2, "No such file or directory")),
             FakeDefault(),
             "Couldn't run browser command 'nobrowser --new': No such file or directory.",
         ),
-        ({}, FakePopen(), FakeDefault(result=False), "No default browser found."),
+        (None, FakePopen(), FakeDefault(result=False), "No default browser found."),
         (
-            {},
+            None,
             FakePopen(),
             FakeDefault(error=webbrowser.Error("could not locate runnable browser")),
             "Couldn't open the default browser: could not locate runnable browser.",
@@ -159,9 +167,9 @@ def test_open_url_default():
     ],
     ids=["unparseable", "not found", "no default", "default error"],
 )
-def test_open_url_errors(env, popen, default, message):
+def test_open_url_errors(launcher, popen, default, message):
     with pytest.raises(LaunchError) as exc_info:
-        open_url(URL, env, fake_run(), popen, default)
+        open_url(URL, launcher, popen, default)
     assert str(exc_info.value) == message
 
 
@@ -172,7 +180,7 @@ def test_open_url_runs_launcher(tmp_path):
     script = tmp_path / "browser.sh"
     script.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{out}.tmp" && mv "{out}.tmp" "{out}"\n')
     script.chmod(0o755)
-    open_url(URL, {"GH_BROWSER": f"{script} --flag"}, fake_run())
+    open_url(URL, f"{script} --flag")
     for _ in range(500):
         if out.exists():
             break

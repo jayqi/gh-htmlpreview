@@ -1,6 +1,8 @@
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from email.message import Message
 import http.client
+import json
 import os
 import re
 import subprocess
@@ -30,9 +32,6 @@ class Response(Protocol):
     def close(self) -> None: ...
 
 
-Urlopen = Callable[[urllib.request.Request, float], Response]
-
-
 class _SameHostAuthRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Keeps the Authorization header on a redirect only if it stays on the same HTTPS host."""
 
@@ -46,22 +45,22 @@ class _SameHostAuthRedirectHandler(urllib.request.HTTPRedirectHandler):
         return new
 
 
-_opener = urllib.request.build_opener(_SameHostAuthRedirectHandler)
-
-
-def _default_urlopen(request: urllib.request.Request, timeout: float) -> Response:
-    return _opener.open(request, timeout=timeout)
+@dataclass(frozen=True)
+class Token:
+    value: str
+    source: str
+    """Where the token came from, for error messages."""
 
 
 def resolve_token(
     env: Mapping[str, str] = os.environ,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-) -> str | None:
+) -> Token | None:
     """Find a GitHub token from the environment or the GitHub CLI."""
     for name in ("GH_TOKEN", "GITHUB_TOKEN"):
-        token = env.get(name, "").strip()
-        if token:
-            return token
+        value = env.get(name, "").strip()
+        if value:
+            return Token(value, name)
     try:
         result = run(
             ["gh", "auth", "token", "--hostname", "github.com"],
@@ -73,19 +72,39 @@ def resolve_token(
         return None
     if result.returncode != 0:
         return None
-    return result.stdout.strip() or None
+    value = result.stdout.strip()
+    return Token(value, "gh auth") if value else None
 
 
 def _quote_path(segments: Sequence[str]) -> str:
     return "/".join(quote(s, safe="") for s in segments)
 
 
-class Client:
-    """Resolves refs and fetches files from GitHub."""
+def _error_detail(error: urllib.error.HTTPError) -> str | None:
+    """The message from GitHub's JSON error body, if there is one."""
+    try:
+        body = json.loads(error.read(65536))
+    except (OSError, http.client.HTTPException, ValueError):
+        return None
+    if isinstance(body, dict) and isinstance(body.get("message"), str):
+        return body["message"].strip() or None
+    return None
 
-    def __init__(self, token: str | None, urlopen: Urlopen = _default_urlopen):
+
+class Client:
+    """Resolves refs and fetches files from GitHub.
+
+    Args:
+        token: Token to authenticate with. Without one, files come from raw.githubusercontent.com.
+        transport: Handler that sends requests in place of urllib's HTTP handlers.
+    """
+
+    def __init__(self, token: Token | None, transport: urllib.request.BaseHandler | None = None):
         self.token = token
-        self._urlopen = urlopen
+        handlers: list[urllib.request.BaseHandler] = [_SameHostAuthRedirectHandler()]
+        if transport is not None:
+            handlers.append(transport)
+        self._opener = urllib.request.build_opener(*handlers)
 
     def resolve(self, owner: str, repo: str, segments: Sequence[str]) -> tuple[str, str]:
         """Split segments into a ref and a file path, and resolve the ref to a commit SHA.
@@ -102,14 +121,21 @@ class Client:
                 if e.code == 422:
                     continue
                 if e.code == 404:
-                    message = f"Repository {owner}/{repo} not found."
                     if self.token is None:
-                        message += f" {_AUTH_HINT}"
+                        message = f"Repository {owner}/{repo} not found. {_AUTH_HINT}"
+                    else:
+                        message = (
+                            f"Repository {owner}/{repo} not found, or the token from "
+                            f"{self.token.source} can't access it."
+                        )
                     raise NotFound(message) from None
                 raise UpstreamError(self._describe_http_error(e, url)) from None
             sha = body.decode("ascii", errors="replace").strip()
             if not _SHA_PATTERN.fullmatch(sha):
                 raise UpstreamError(f"Unexpected response from {url}: {sha[:100]!r}")
+            # The commits API also matches SHA prefixes. Only full SHAs are accepted as refs.
+            if end == 1 and 4 <= len(ref[0]) < 40 and sha.startswith(ref[0].lower()):
+                continue
             return sha, "/".join(segments[end:])
         raise NotFound(
             f"No branch, tag or commit in {owner}/{repo} matches the start of "
@@ -119,8 +145,8 @@ class Client:
     def fetch(self, owner: str, repo: str, sha: str, path: str) -> bytes:
         """Fetch a file's contents at a commit."""
         segments = [s for s in path.split("/") if s]
-        if not segments:
-            raise NotFound("No file path given.")
+        if not segments or any(s in (".", "..") for s in segments):
+            raise NotFound(f"Invalid file path {path!r}.")
         if self.token is not None:
             url = (
                 f"{API_URL}/repos/{_quote_path([owner, repo])}/contents/{_quote_path(segments)}"
@@ -158,9 +184,9 @@ class Client:
         if url.startswith(f"{API_URL}/"):
             request.add_header("X-GitHub-Api-Version", "2022-11-28")
             if self.token is not None:
-                request.add_unredirected_header("Authorization", f"Bearer {self.token}")
+                request.add_unredirected_header("Authorization", f"Bearer {self.token.value}")
         try:
-            return self._urlopen(request, TIMEOUT_SECONDS)
+            return self._opener.open(request, timeout=TIMEOUT_SECONDS)
         except urllib.error.HTTPError:
             raise
         except (OSError, http.client.HTTPException) as e:
@@ -180,4 +206,9 @@ class Client:
                 if self.token is None:
                     message += " Run 'gh auth login' or set GH_TOKEN for a higher limit."
                 return message
-        return f"GitHub returned HTTP {error.code} for {url}"
+        detail = _error_detail(error)
+        if error.code == 401 and self.token is not None:
+            message = f"GitHub rejected the token from {self.token.source}"
+        else:
+            message = f"GitHub returned HTTP {error.code} for {url}"
+        return f"{message}: {detail}" if detail else message

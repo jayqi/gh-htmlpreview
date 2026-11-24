@@ -19,7 +19,7 @@ if command -v uv >/dev/null 2>&1; then
     if python_path="$(uv python find --system '>=3.11' 2>/dev/null)"; then
         run_python=("$python_path")
     else
-        run_python=(uv run --no-project --python '>=3.11' -- python)
+        run_python=(uv run --no-project --isolated --python '>=3.11' -- python)
     fi
 else
     run_python=()

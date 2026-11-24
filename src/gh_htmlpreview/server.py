@@ -1,8 +1,10 @@
 from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
+import errno
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import mimetypes
 import posixpath
+import socket
 import socketserver
 import sys
 import threading
@@ -16,6 +18,12 @@ Source = Callable[[str], bytes]
 """Returns the contents of a file by its repository path. Raises NotFound or UpstreamError."""
 
 HOST = "127.0.0.1"
+
+_ADDRESS_IN_USE = tuple(
+    code
+    for name in ("EADDRINUSE", "WSAEADDRINUSE")
+    if (code := getattr(errno, name, None)) is not None
+)
 
 _CONTROL_CHARS = {c: f"\\x{c:02x}" for c in (*range(0x20), *range(0x7F, 0xA0))} | {0x5C: "\\\\"}
 
@@ -34,9 +42,15 @@ MIME_OVERRIDES = {
 def content_type(path: str) -> str:
     ext = posixpath.splitext(path)[1].lower()
     if ext in MIME_OVERRIDES:
-        return MIME_OVERRIDES[ext]
-    guessed, _ = mimetypes.guess_type(path, strict=False)
-    return guessed or "application/octet-stream"
+        mime_type = MIME_OVERRIDES[ext]
+    else:
+        mime_type, encoding = mimetypes.guess_type(path, strict=False)
+        # A compressed file, such as data.json.gz, would need a Content-Encoding.
+        if mime_type is None or encoding is not None:
+            return "application/octet-stream"
+    if mime_type.startswith("text/"):
+        return f"{mime_type}; charset=utf-8"
+    return mime_type
 
 
 def normalize_path(request_path: str) -> str | None:
@@ -55,6 +69,36 @@ def normalize_path(request_path: str) -> str | None:
     if path.endswith("/"):
         segments.append("index.html")
     return "/".join(segments)
+
+
+def _prepare_socket(sock: socket.socket) -> None:
+    # On Windows, SO_REUSEADDR allows binding a port that another socket is listening on.
+    if sys.platform == "win32":
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    else:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+
+def _check_port_free(port: int) -> None:
+    """Raise the bind error if another socket holds the port on an address that receives
+    127.0.0.1 traffic. Each probe binds a throwaway socket and closes it without listening.
+    """
+    for family, address in (
+        (socket.AF_INET, HOST),
+        (socket.AF_INET, "0.0.0.0"),
+        (socket.AF_INET6, "::"),
+    ):
+        try:
+            sock = socket.socket(family, socket.SOCK_STREAM)
+        except OSError:
+            continue  # Address family not supported
+        with sock:
+            _prepare_socket(sock)
+            try:
+                sock.bind((address, port))
+            except OSError as e:
+                if e.errno in _ADDRESS_IN_USE:
+                    raise
 
 
 class _NotFoundEntry:
@@ -125,12 +169,19 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _check_request(self, head: bool = False) -> bool:
         """Send an error and return False if the request must be refused."""
-        if self.headers.get("Host") != f"{HOST}:{self._server().port}":
-            self._send_text(403, "Forbidden host.", head=head)
+        port = self._server().port
+        # Clients leave out the default port.
+        allowed_hosts = (f"{HOST}:{port}", HOST) if port == 80 else (f"{HOST}:{port}",)
+        if self.headers.get("Host") not in allowed_hosts:
+            self._send_text(403, f"Forbidden host. Open http://{HOST}:{port}/ instead.", head=head)
             return False
         # Browsers send "none" for navigations the user started, such as opening the URL.
         if self.headers.get("Sec-Fetch-Site", "none") not in ("same-origin", "none"):
             self._send_text(403, "Requests from other sites aren't allowed.", head=head)
+            return False
+        if self.headers.get("Service-Worker") == "script":
+            self.log_message("Blocked service worker registration: %s", self.path)
+            self._send_text(403, "Service workers aren't allowed.", head=head)
             return False
         if not self.path.startswith("/"):
             self._send_text(400, "Bad request.", head=head)
@@ -139,10 +190,6 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _serve(self, head: bool) -> None:
         server = self._server()
-        if self.headers.get("Service-Worker") == "script":
-            self.log_message("Blocked service worker registration: %s", self.path)
-            self._send_text(403, "Service workers aren't allowed.", head=head)
-            return
         if self.path.split("?", 1)[0] == "/":
             self.send_response(302)
             self.send_header("Location", f"/{quote(server.target_path)}")
@@ -197,6 +244,8 @@ class PreviewServer(ThreadingHTTPServer):
         seed: Files already fetched, by repository path.
     """
 
+    allow_reuse_address = False  # _prepare_socket sets this per platform
+
     def __init__(
         self,
         source: Source,
@@ -212,6 +261,10 @@ class PreviewServer(ThreadingHTTPServer):
         super().__init__((HOST, port), _Handler)
 
     def server_bind(self):
+        _prepare_socket(self.socket)
+        # Probes run before the real bind. On Linux, they'd conflict with this socket after it.
+        if self.server_address[1] != 0:
+            _check_port_free(int(self.server_address[1]))
         # Skips HTTPServer.server_bind, whose reverse DNS lookup for server_name can hang.
         socketserver.TCPServer.server_bind(self)
         self.server_name = HOST
