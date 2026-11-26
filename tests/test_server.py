@@ -141,7 +141,6 @@ def test_asset_paths(server, path, expected):
         "/%2e%2e/index.html",
         "/docs/%2E%2E/%2e%2e/index.html",
         "/..%2findex.html",
-        "/.",
     ],
 )
 def test_escaping_root(server, source, path):
@@ -226,7 +225,9 @@ def test_forbidden_hosts(server, source, host, method):
     host = host if host is None else host.format(port=server.port, other=server.port + 1)
     status, _, body = request(server, "/docs/style.css", method=method, host=host)
     assert status == 403
-    expected = f"Forbidden host. Open http://127.0.0.1:{server.port}/ instead.\n".encode()
+    expected = (
+        f"Forbidden host. Open http://127.0.0.1:{server.port}/docs/style.css instead.\n".encode()
+    )
     assert body == (b"" if method == "HEAD" else expected)
     assert source.calls == Counter()
 
@@ -320,6 +321,10 @@ def test_content_type_header(source, path):
         ("/a/../b.html", "b.html"),
         ("/a/", "a/index.html"),
         ("/", "index.html"),
+        ("/.", "index.html"),
+        ("/a/.", "a/index.html"),
+        ("/a/..", "index.html"),
+        ("/a/b/..", "a/index.html"),
         ("/..", None),
         ("/a/../..", None),
         ("/a/%2e%2e/%2e%2e/b", None),

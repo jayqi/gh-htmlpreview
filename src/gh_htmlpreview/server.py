@@ -67,7 +67,7 @@ def normalize_path(request_path: str) -> str | None:
             segments.pop()
         else:
             segments.append(segment)
-    if path.endswith("/"):
+    if path.endswith("/") or path.split("/")[-1] in (".", ".."):
         segments.append("index.html")
     return "/".join(segments)
 
@@ -187,7 +187,10 @@ class _Handler(BaseHTTPRequestHandler):
         # Clients leave out the default port.
         allowed_hosts = (f"{HOST}:{port}", HOST) if port == 80 else (f"{HOST}:{port}",)
         if self.headers.get("Host") not in allowed_hosts:
-            self._send_text(403, f"Forbidden host. Open http://{HOST}:{port}/ instead.", head=head)
+            path = self.path if self.path.startswith("/") else "/"
+            self._send_text(
+                403, f"Forbidden host. Open http://{HOST}:{port}{path} instead.", head=head
+            )
             return False
         # Browsers send "none" for navigations the user started, such as opening the URL.
         if self.headers.get("Sec-Fetch-Site", "none") not in ("same-origin", "none"):
@@ -205,7 +208,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _serve(self, head: bool) -> None:
         server = self._server()
         path = normalize_path(self.path)
-        if not path:
+        if path is None:
             self._send_not_found(head)
             return
         try:

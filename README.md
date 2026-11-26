@@ -119,7 +119,7 @@ The tool will automatically open your browser to the served page. You can config
 
 Use `-n`/`--no-browser` to print the URL without opening a browser.
 
-In an SSH session, or on Linux without a display, the default browser isn't opened. Over SSH, it prints the port-forwarding command to run on your own machine, such as `ssh -L 53817:127.0.0.1:53817 HOST`. Forward to the same port number and open `http://127.0.0.1:PORT`, not `localhost`, or the server refuses the request. You can use `-p`/`--port` to specify a port in order to keep the same port between sessions.
+In an SSH session, or on Linux without a display, the default browser isn't opened. Over SSH, it prints the port-forwarding command to run on your own machine, such as `ssh -L 53817:127.0.0.1:53817 HOST`. Forward to the same port number and open the printed URL as is, with `127.0.0.1` rather than `localhost`, or the server refuses the request. You can use `-p`/`--port` to specify a port in order to keep the same port between sessions.
 
 ## Security
 
