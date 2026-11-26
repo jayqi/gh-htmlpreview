@@ -105,9 +105,6 @@ jobs:
       - name: Run static typechecking
         run: just typecheck --python=${{ matrix.python-version }}
 
-      - name: Probe bind behavior (temporary)
-        run: uv run --python=${{ matrix.python-version }} --isolated --no-dev -- python .github/bind_probe.py
-
       - name: Run tests
         run: just test --python=${{ matrix.python-version }} -- -vv
 

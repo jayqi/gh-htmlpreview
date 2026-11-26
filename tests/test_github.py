@@ -2,6 +2,7 @@ import http.client
 import io
 import os
 import subprocess
+import sys
 
 import pytest
 
@@ -69,6 +70,7 @@ def test_resolve_token_none(run):
     assert resolve_token({}, run) is None
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="uses a shell script as gh")
 def test_resolve_token_from_gh_on_path(tmp_path, monkeypatch):
     gh = tmp_path / "gh"
     gh.write_text('#!/bin/sh\n[ "$*" = "auth token --hostname github.com" ] && echo from-gh\n')
