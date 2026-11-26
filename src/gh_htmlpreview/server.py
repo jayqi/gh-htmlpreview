@@ -94,6 +94,9 @@ def _check_port_free(port: int) -> None:
             continue  # Address family not supported
         with sock:
             _prepare_socket(sock)
+            if family == socket.AF_INET6:
+                # Dual-stack, to detect dual-stack listeners. Windows defaults to IPv6-only.
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
             try:
                 sock.bind((address, port))
             except OSError as e:
