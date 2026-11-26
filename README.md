@@ -6,13 +6,13 @@ A GitHub CLI extension or a standalone Python CLI tool for serving a preview of 
 
 Handy for browsing things like:
 
-- Docs websites, espcially ones in private repos
+- Docs websites, especially ones in private repos
 - LLM-generated rich HTML artifacts
 - [Marimo notebook](https://marimo.io/) HTML exports
 - [Quarto](http://quarto.org/) reports
 
 > [!IMPORTANT]
-> **Security:** The previewed page's JavaScript runs in your browser like any website's. Only preview pages from repositories you trust as much as a website you'd visit. See the [Security](#security) section for additioanl discussion.
+> **Security:** The previewed page's JavaScript runs in your browser like any website's. Only preview pages from repositories you trust as much as a website you'd visit. See the [Security](#security) section for additional discussion.
 
 > [!NOTE]
 > What this tool does is similar to [htmlpreview.github.io](https://htmlpreview.github.io/), but it runs locally and authenticates through the GitHub CLI. It does not route content through a third-party website, and it works for private repos. We are not affiliated in any way with htmlpreview.github.io.
@@ -111,17 +111,17 @@ Without a token, public repositories still work. Files come from `raw.githubuser
 The tool will automatically open your browser to the served page. You can configure a browser command, and it follows the GitHub CLI's behavior with the following order:
 
 - The `GH_BROWSER` environment variable
-- The `gh config get browser`
-- The the `BROWSER` environment variable
+- `gh config get browser`
+- The `BROWSER` environment variable
 - Your system's default browser
 
 Use `--no-browser/-n` to print the URL without opening a browser.
 
 In an SSH session, or on Linux without a display, the default browser isn't opened. Over SSH, it prints the port-forwarding command to run on your own machine, such as `ssh -L 53817:127.0.0.1:53817 HOST`. You can use `--port/-p` to specify a port in order to keep the same port between sessions.
 
-## Security considerations
+## Security
 
-The previewed page's JavaScript runs in your browser like any website's. **Only preview pages from repositories you trust as much as a website you'd visit.** Because browsers don't separate cookies by port, that JavaScript can read and set cookies of other apps served on `127.0.0.1`, other than HttpOnly ones. Storage the page leaves behind, such as `localStorage`, can also be seen by later web applications served at same port.
+The previewed page's JavaScript runs in your browser like any website's. **Only preview pages from repositories you trust as much as a website you'd visit.** Because browsers don't separate cookies by port, that JavaScript can read and set cookies of other apps served on `127.0.0.1`, other than HttpOnly ones. Storage the page leaves behind, such as `localStorage`, can also be seen by later web applications served at the same port.
 
 The design of this tool takes the following precautions to avoid security problems:
 
