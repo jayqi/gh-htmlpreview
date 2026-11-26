@@ -7,15 +7,15 @@ A GitHub CLI extension or a standalone Python CLI tool for serving a preview of 
 Handy for browsing things like:
 
 - Static sites and built docs, especially in private repos
-- Notebook and report exports from [Jupyter](https://jupyter.org/), [marimo](https://marimo.io/), [Quarto](https://quarto.org/) or R Markdown
-- Interactive charts exported to HTML, from libraries like Plotly, Bokeh or Altair
+- Notebook and report exports from [Jupyter](https://jupyter.org/), [marimo](https://marimo.io/), [Quarto](https://quarto.org/), or R Markdown
+- Interactive charts exported to HTML, from libraries like Plotly, Bokeh, or Altair
 - HTML prototypes and LLM-generated artifacts
 
 > [!IMPORTANT]
 > **Security:** The previewed page's JavaScript runs in your browser like any website's. Only preview pages from repositories you trust as much as a website you'd visit. See the [Security](#security) section for additional discussion.
 
 > [!NOTE]
-> What this tool does is similar to [htmlpreview.github.io](https://htmlpreview.github.io/), but it runs locally and authenticates through the GitHub CLI. It does not route content through a third-party website, and it works for private repos. We are not affiliated in any way with htmlpreview.github.io.
+> What this tool does is similar to [htmlpreview.github.io](https://htmlpreview.github.io/), but it runs locally and can authenticate with your GitHub CLI login or a token. It does not route content through a third-party website, and it works for private repos. We are not affiliated in any way with htmlpreview.github.io.
 
 ## Installation
 
@@ -58,7 +58,7 @@ Serving jayqi/gh-htmlpreview@a64dfb7:demo/index.html at http://127.0.0.1:53817/d
 Shutting down after 0:10:00 without requests. Press Ctrl-C to stop.
 ```
 
-The branch or tag is resolved to a commit when it starts, and every file in the session comes from that commit. The server stops after 10 minutes without requests, or when you press Ctrl-C.
+The branch or tag is resolved to a commit when it starts, and every file in the session comes from that commit. The server stops after an idle timeout without requests (by default 10 minutes, configurable with `-t`/`--timeout`), or when you press Ctrl-C.
 
 A private repository works the same way once you're signed in to the GitHub CLI:
 
@@ -88,7 +88,7 @@ gh hp https://github.com/jayqi/gh-htmlpreview/blob/main/demo/index.html
 - `https://github.com/{owner}/{repo}/raw/{ref}/{path}`
 - `https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}`
 
-`{ref}` can be a branch, a tag or a full commit SHA, as in GitHub's permalinks.
+`{ref}` can be a branch, a tag, or a full commit SHA, as in GitHub's permalinks.
 
 ### Links between pages
 
@@ -106,11 +106,11 @@ This tool authenticates with any GitHub token that can read the repository, such
 
 If you create a personal access token for this, a fine-grained token needs the "Contents: Read-only" permission, and a classic token needs the `repo` scope for private repositories.
 
-Without a token, public repositories still work. Files come from `raw.githubusercontent.com`, and only resolving the branch uses the GitHub API, which allows 60 unauthenticated requests per hour.
+Without a token, public repositories still work. Files come from `raw.githubusercontent.com`, and only resolving the branch, tag, or commit uses the GitHub API, which allows 60 unauthenticated requests per hour.
 
 ### Opening the browser
 
-The tool will automatically open your browser to the served page. You can configure a browser command, and it follows the GitHub CLI's behavior with the following order:
+The tool will automatically open your browser to the served page. You can configure a browser command, and the configuration source follows the GitHub CLI's behavior with the following order:
 
 - The `GH_BROWSER` environment variable
 - `gh config get browser`
@@ -119,7 +119,7 @@ The tool will automatically open your browser to the served page. You can config
 
 Use `-n`/`--no-browser` to print the URL without opening a browser.
 
-In an SSH session, or on Linux without a display, the default browser isn't opened. Over SSH, it prints the port-forwarding command to run on your own machine, such as `ssh -L 53817:127.0.0.1:53817 HOST`. You can use `-p`/`--port` to specify a port in order to keep the same port between sessions.
+In an SSH session, or on Linux without a display, the default browser isn't opened. Over SSH, it prints the port-forwarding command to run on your own machine, such as `ssh -L 53817:127.0.0.1:53817 HOST`. Forward to the same port number and open `http://127.0.0.1:PORT`, not `localhost`, or the server refuses the request. You can use `-p`/`--port` to specify a port in order to keep the same port between sessions.
 
 ## Security
 
@@ -127,7 +127,7 @@ The previewed page's JavaScript runs in your browser like any website's. **Only 
 
 The design of this tool takes the following precautions to avoid security problems:
 
-- The server listens on `127.0.0.1` only (and not 0.0.0.0 that allows other devices to connect).
+- The server listens on `127.0.0.1` only (and not `0.0.0.0`, which would allow other devices to connect).
 - There is an idle timeout after which the server is shut down. By default, it is 10 minutes.
 - Requests must have the `Host` header `127.0.0.1:{port}`, which blocks DNS-rebinding attacks from reading repository content through the server.
 - Requests from other sites are refused, based on the `Sec-Fetch-Site` header that browsers send. This includes other apps served on `127.0.0.1`.
