@@ -8,8 +8,8 @@ Handy for browsing things like:
 
 - Docs websites, especially ones in private repos
 - LLM-generated rich HTML artifacts
-- [Marimo notebook](https://marimo.io/) HTML exports
-- [Quarto](http://quarto.org/) reports
+- [marimo notebook](https://marimo.io/) HTML exports
+- [Quarto](https://quarto.org/) reports
 
 > [!IMPORTANT]
 > **Security:** The previewed page's JavaScript runs in your browser like any website's. Only preview pages from repositories you trust as much as a website you'd visit. See the [Security](#security) section for additional discussion.
@@ -58,7 +58,7 @@ Serving jayqi/gh-htmlpreview@a64dfb7:demo/index.html at http://127.0.0.1:53817/d
 Shutting down after 0:10:00 without requests. Press Ctrl-C to stop.
 ```
 
-The branch is resolved to a commit when it starts, and every file in the session comes from that commit. The server stops after 10 minutes without requests, or when you press Ctrl-C.
+The branch or tag is resolved to a commit when it starts, and every file in the session comes from that commit. The server stops after 10 minutes without requests, or when you press Ctrl-C.
 
 A private repository works the same way once you're signed in to the GitHub CLI:
 
@@ -94,15 +94,17 @@ gh hp https://github.com/jayqi/gh-htmlpreview/blob/main/demo/index.html
 
 The whole repository at that commit is servable from the HTTP server's root, so relative links (`../index.html`) and root-relative links (`/docs/other.html`) resolve the way they would on GitHub Pages serving from the repository root. Following links from the previewed page to other HTML files in the repository works as a result, but it's best effort: a link to a directory needs a trailing slash (`articles/`) to serve its `index.html`.
 
+Root-relative links assume the site's root is the repository's root. A site built into a subdirectory, such as `site/` or `docs/_build/html/`, works only if its links are relative. Links that leave off both the trailing slash and `.html` (`/about`) won't resolve.
+
 ### Authentication
 
-This tool uses a GitHub auth token (e.g., `gh auth`, a personal access token, OAuth app token) to authenticate. It checks token sources in the following order:
+This tool authenticates with any GitHub token that can read the repository, such as the one from `gh auth login` or a personal access token. It checks token sources in the following order:
 
 1. The `GH_TOKEN` environment variable
 2. The `GITHUB_TOKEN` environment variable
 3. `gh auth token`, if the GitHub CLI is installed and signed in
 
-If generating a token with fine-grained permissions, it needs "Contents: Read-only" (`contents: read`) permissions.
+If you create a personal access token for this, a fine-grained token needs the "Contents: Read-only" permission, and a classic token needs the `repo` scope for private repositories.
 
 Without a token, public repositories still work. Files come from `raw.githubusercontent.com`, and only resolving the branch uses the GitHub API, which allows 60 unauthenticated requests per hour.
 
@@ -115,9 +117,9 @@ The tool will automatically open your browser to the served page. You can config
 - The `BROWSER` environment variable
 - Your system's default browser
 
-Use `--no-browser/-n` to print the URL without opening a browser.
+Use `-n`/`--no-browser` to print the URL without opening a browser.
 
-In an SSH session, or on Linux without a display, the default browser isn't opened. Over SSH, it prints the port-forwarding command to run on your own machine, such as `ssh -L 53817:127.0.0.1:53817 HOST`. You can use `--port/-p` to specify a port in order to keep the same port between sessions.
+In an SSH session, or on Linux without a display, the default browser isn't opened. Over SSH, it prints the port-forwarding command to run on your own machine, such as `ssh -L 53817:127.0.0.1:53817 HOST`. You can use `-p`/`--port` to specify a port in order to keep the same port between sessions.
 
 ## Security
 
