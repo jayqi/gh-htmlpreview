@@ -2,14 +2,14 @@
 
 [![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jayqi/gh-htmlpreview/badges/coverage.json)](https://github.com/jayqi/gh-htmlpreview/actions/workflows/tests.yml?query=branch%3Amain)
 
-A GitHub CLI extension or a standalone Python CLI tool for serving a preview of an HTML file from a GitHub repository. Pass a URL for a file in a GitHub repository, and it will open your browser to a local HTTP server that serves the file and its relative assets (CSS, JavaScript, images, etc.). All files are handled in memory, so no need to download files or clean them up afterwards. It can authenticate with GitHub to work with either public or private repos.
+A GitHub CLI extension or a standalone Python CLI tool for serving a preview of an HTML file from a GitHub repository. Pass a URL for a file in a GitHub repository, and it will open your browser to a local HTTP server that serves the file and its relative assets (CSS, JavaScript, images, etc.). You can also follow links to other pages in the repository. All files are handled in memory, so no need to download files or clean them up afterwards. It can authenticate with GitHub to work with either public or private repos.
 
 Handy for browsing things like:
 
-- Docs websites, especially ones in private repos
-- LLM-generated rich HTML artifacts
-- [marimo notebook](https://marimo.io/) HTML exports
-- [Quarto](https://quarto.org/) reports
+- Static sites and built docs, especially in private repos
+- Notebook and report exports from [Jupyter](https://jupyter.org/), [marimo](https://marimo.io/), [Quarto](https://quarto.org/) or R Markdown
+- Interactive charts exported to HTML, from libraries like Plotly, Bokeh or Altair
+- HTML prototypes and LLM-generated artifacts
 
 > [!IMPORTANT]
 > **Security:** The previewed page's JavaScript runs in your browser like any website's. Only preview pages from repositories you trust as much as a website you'd visit. See the [Security](#security) section for additional discussion.
