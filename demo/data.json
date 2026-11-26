@@ -1,0 +1,4 @@
+{
+  "message": "The script fetched this list from data.json:",
+  "files": ["index.html", "other.html", "style.css", "script.js", "logo.svg", "data.json"]
+}
