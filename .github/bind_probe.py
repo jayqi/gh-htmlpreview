@@ -3,9 +3,14 @@
 import socket
 import sys
 
-from gh_htmlpreview.server import _prepare_socket
+from gh_htmlpreview.server import _check_port_free, _prepare_socket
 
-PROBES = [(socket.AF_INET, "127.0.0.1"), (socket.AF_INET, "0.0.0.0"), (socket.AF_INET6, "::")]
+PROBES = [
+    ("AF_INET 127.0.0.1", socket.AF_INET, "127.0.0.1", None),
+    ("AF_INET 0.0.0.0", socket.AF_INET, "0.0.0.0", None),
+    ("AF_INET6 :: default", socket.AF_INET6, "::", None),
+    ("AF_INET6 :: dual-stack", socket.AF_INET6, "::", 0),
+]
 HOLDERS = [
     ("127.0.0.1", socket.AF_INET, "127.0.0.1", None),
     ("0.0.0.0", socket.AF_INET, "0.0.0.0", None),
@@ -18,9 +23,11 @@ def describe(e: OSError) -> str:
     return f"errno={e.errno} winerror={getattr(e, 'winerror', None)} {e.strerror}"
 
 
-def try_bind(family: socket.AddressFamily, address: str, port: int) -> str:
+def try_bind(family: socket.AddressFamily, address: str, v6only: int | None, port: int) -> str:
     with socket.socket(family, socket.SOCK_STREAM) as sock:
         _prepare_socket(sock)
+        if v6only is not None:
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, v6only)
         try:
             sock.bind((address, port))
         except OSError as e:
@@ -41,6 +48,12 @@ for label, family, address, holder_v6only in HOLDERS:
         holder.bind((address, 0))
         holder.listen()
         port = holder.getsockname()[1]
-        for probe_family, probe_address in PROBES:
-            result = try_bind(probe_family, probe_address, port)
-            print(f"  bind {probe_family.name} {probe_address}:{port} -> {result}")
+        for probe_label, probe_family, probe_address, probe_v6only in PROBES:
+            result = try_bind(probe_family, probe_address, probe_v6only, port)
+            print(f"  bind {probe_label} port {port} -> {result}")
+        try:
+            _check_port_free(port)
+        except OSError as e:
+            print(f"  _check_port_free -> raised {describe(e)}")
+        else:
+            print("  _check_port_free -> OK")
