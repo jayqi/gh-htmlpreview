@@ -191,7 +191,7 @@ def test_fixed_port(fake_github, browser, capsys):
 
 
 def test_port_in_use(fake_github, browser, capsys):
-    with PreviewServer(lambda path: b"", "a.html") as other:
+    with PreviewServer(lambda path: b"", "a.html", "octo/repo@3f2c1a9") as other:
         with pytest.raises(SystemExit) as exc_info:
             main([TARGET_URL, "-p", str(other.port)])
     assert exc_info.value.code == 1

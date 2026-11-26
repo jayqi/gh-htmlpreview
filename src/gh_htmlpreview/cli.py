@@ -115,16 +115,21 @@ def main(argv: Sequence[str] | None = None, prog: str = "gh-htmlpreview") -> Non
     except KeyboardInterrupt:
         sys.exit(130)
 
+    repo_commit = f"{owner}/{repo}@{sha[:7]}"
     try:
         server = PreviewServer(
-            partial(client.fetch, owner, repo, sha), path, port=args.port, seed={path: target}
+            partial(client.fetch, owner, repo, sha),
+            path,
+            repo_commit,
+            port=args.port,
+            seed={path: target},
         )
     except OSError as e:
         fail(f"Couldn't bind to {HOST}:{args.port}: {e.strerror or e}")
 
     timeout = timedelta(seconds=args.timeout)
     with server:
-        print(f"Serving {owner}/{repo}@{sha[:7]}:{path} at {server.url}")
+        print(f"Serving {repo_commit}:{path} at {server.url}")
         print(f"Shutting down after {timeout} without requests. Press Ctrl-C to stop.", flush=True)
         try:
             if not args.no_browser:

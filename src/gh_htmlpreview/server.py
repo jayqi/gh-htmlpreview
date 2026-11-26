@@ -1,6 +1,7 @@
 from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 import errno
+import html
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import mimetypes
 import posixpath
@@ -69,6 +70,16 @@ def normalize_path(request_path: str) -> str | None:
     if path.endswith("/"):
         segments.append("index.html")
     return "/".join(segments)
+
+
+def not_found_page(target_path: str, repo_commit: str) -> str:
+    link = f'<a href="/{quote(target_path)}"><code>{html.escape(target_path)}</code></a>'
+    return (
+        "<!doctype html>\n"
+        "<title>Not found</title>\n"
+        "<h1>Not found</h1>\n"
+        f"<p>This server is previewing {link} from <code>{html.escape(repo_commit)}</code>.</p>\n"
+    )
 
 
 def _prepare_socket(sock: socket.socket) -> None:
@@ -193,20 +204,14 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _serve(self, head: bool) -> None:
         server = self._server()
-        if self.path.split("?", 1)[0] == "/":
-            self.send_response(302)
-            self.send_header("Location", f"/{quote(server.target_path)}")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
         path = normalize_path(self.path)
         if not path:
-            self._send_text(404, "Not found.", head=head)
+            self._send_not_found(head)
             return
         try:
             body = server.cache.get(path)
         except NotFound:
-            self._send_text(404, "Not found.", head=head)
+            self._send_not_found(head)
             return
         except UpstreamError as e:
             self.log_message("Error fetching %s: %s", path, e)
@@ -219,6 +224,11 @@ class _Handler(BaseHTTPRequestHandler):
         if not head:
             self.wfile.write(body)
 
+    def _send_not_found(self, head: bool) -> None:
+        server = self._server()
+        page = not_found_page(server.target_path, server.repo_commit)
+        self._send(404, page.encode(), "text/html; charset=utf-8", head=head)
+
     def _send_text(
         self,
         code: int,
@@ -227,8 +237,18 @@ class _Handler(BaseHTTPRequestHandler):
         extra_headers: Mapping[str, str] | None = None,
     ) -> None:
         body = f"{text}\n".encode()
+        self._send(code, body, "text/plain; charset=utf-8", head, extra_headers)
+
+    def _send(
+        self,
+        code: int,
+        body: bytes,
+        media_type: str,
+        head: bool = False,
+        extra_headers: Mapping[str, str] | None = None,
+    ) -> None:
         self.send_response(code)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Type", media_type)
         self.send_header("Content-Length", str(len(body)))
         for name, value in (extra_headers or {}).items():
             self.send_header(name, value)
@@ -242,7 +262,8 @@ class PreviewServer(ThreadingHTTPServer):
 
     Args:
         source: Returns a file's contents by repository path.
-        target_path: Repository path of the file being previewed. `/` redirects to it.
+        target_path: Repository path of the file being previewed.
+        repo_commit: Repository and commit being served, such as "owner/repo@abc1234".
         port: Port to bind to. 0 uses a port chosen by the operating system.
         seed: Files already fetched, by repository path.
     """
@@ -253,10 +274,12 @@ class PreviewServer(ThreadingHTTPServer):
         self,
         source: Source,
         target_path: str,
+        repo_commit: str,
         port: int = 0,
         seed: Mapping[str, bytes] | None = None,
     ):
         self.target_path = target_path
+        self.repo_commit = repo_commit
         self.cache = _Cache(source, seed or {})
         self._lock = threading.Lock()
         self._in_flight = 0
