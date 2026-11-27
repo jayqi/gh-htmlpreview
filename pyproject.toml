@@ -6,8 +6,30 @@ readme = "README.md"
 authors = [
     { name = "Jay Qi", email = "jayqi@users.noreply.github.com" }
 ]
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["github", "gh-extension", "html", "preview"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Utilities",
+]
 requires-python = ">=3.11"
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/jayqi/gh-htmlpreview"
+Repository = "https://github.com/jayqi/gh-htmlpreview"
+Changelog = "https://github.com/jayqi/gh-htmlpreview/blob/main/CHANGELOG.md"
+Issues = "https://github.com/jayqi/gh-htmlpreview/issues"
 
 [project.scripts]
 gh-htmlpreview = "gh_htmlpreview.cli:main"
