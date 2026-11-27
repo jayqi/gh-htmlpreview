@@ -55,10 +55,10 @@ gh htmlpreview https://github.com/jayqi/gh-htmlpreview/blob/main/demo/index.html
 
 ```text
 Serving jayqi/gh-htmlpreview@a64dfb7:demo/index.html at http://127.0.0.1:53817/demo/index.html
-Shutting down after 0:10:00 without requests. Press Ctrl-C to stop.
+Shutting down after 0:30:00 without requests. Press Ctrl-C to stop.
 ```
 
-The branch or tag is resolved to a commit when it starts, and every file in the session comes from that commit. The server stops after an idle timeout without requests (by default 10 minutes, configurable with `-t`/`--timeout`), or when you press Ctrl-C.
+The branch or tag is resolved to a commit when it starts, and every file in the session comes from that commit. The server stops after an idle timeout without requests (by default 30 minutes, configurable with `-t`/`--timeout`), or when you press Ctrl-C.
 
 A private repository works the same way once you're signed in to the GitHub CLI:
 
@@ -129,7 +129,7 @@ This tool takes the following security precautions:
 
 - The server listens on `127.0.0.1` only. It does not listen on `0.0.0.0`, which would allow other devices to connect.
 - Requests must have the `Host` header `127.0.0.1:{port}`, which blocks DNS-rebinding attacks from reading repository content through the server. It also refuses `localhost`, in order to keep the cookies of other apps running on `localhost` isolated from the previewed page.
-- There is an idle timeout after which the server is shut down. By default, it is 10 minutes.
+- There is an idle timeout after which the server is shut down. By default, it is 30 minutes.
 - Requests from other sites are refused, based on the `Sec-Fetch-Site` header that browsers send. This includes other apps served on `127.0.0.1`.
 - JavaScript service workers can't be registered, so a previewed page can't leave code behind that intercepts something else served on that port later.
 - A session serves one repository at one commit. It does not mix commits or serve files across repositories.
@@ -154,8 +154,8 @@ options:
   -h, --help            show this help message and exit
   -t, --timeout DURATION
                         Time to keep the server alive after the most recent request,
-                        such as '90s', '10m' or '1h'. A number without a unit is
-                        seconds. (default: 10m)
+                        such as '90s', '10m' or '1h30m'. A number without a unit is
+                        seconds. (default: 30m)
   -p, --port PORT       Port to use. (default: 0, chosen by the operating system)
   -n, --no-browser      Print the URL without opening a browser.
   --version             Show version and exit.
