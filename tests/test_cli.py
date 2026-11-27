@@ -31,7 +31,9 @@ FILES = {
         ("600", 600),
         ("1.5m", 90),
         ("0.5", 0.5),
-        ("10M", 600),
+        ("1h30m", 5400),
+        ("2m30s", 150),
+        ("1h0.5m", 3630),
         (" 10m ", 600),
     ],
 )
@@ -39,7 +41,9 @@ def test_parse_duration(value, expected):
     assert parse_duration(value) == expected
 
 
-@pytest.mark.parametrize("value", ["", "m", "10d", "10 m", "1h30m", "-5", "1e3", "ten"])
+@pytest.mark.parametrize(
+    "value", ["", "m", "10d", "10 m", "10M", "1H", "1h 30m", "1h30", "-5", "1e3", "ten"]
+)
 def test_parse_duration_invalid(value):
     with pytest.raises(argparse.ArgumentTypeError, match="Unable to parse"):
         parse_duration(value)

@@ -10,19 +10,25 @@ from gh_htmlpreview import __version__, browser, github, urls
 from gh_htmlpreview.exceptions import NotFound, UpstreamError
 from gh_htmlpreview.server import HOST, PreviewServer
 
-_DURATION_PATTERN = re.compile(r"(\d+(?:\.\d+)?)([smh]?)")
-_UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600}
+_NUMBER = r"\d+(?:\.\d+)?"
+_DURATION_PART = re.compile(rf"({_NUMBER})([smh])")
+_DURATION_PATTERN = re.compile(rf"(?:{_NUMBER}[smh])+|{_NUMBER}")
+_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
 
 
 def parse_duration(value: str) -> float:
-    """Parse a duration like '90s', '10m', '1h' or '600' into seconds."""
-    match = _DURATION_PATTERN.fullmatch(value.strip().lower())
-    if match is None:
+    """Parse a duration like '90s', '10m', '1h30m' or '600' into seconds."""
+    text = value.strip()
+    if _DURATION_PATTERN.fullmatch(text) is None:
         raise argparse.ArgumentTypeError(
-            f"Unable to parse {value!r} as a duration. Use a number with an optional unit s, m "
-            "or h, such as '90s', '10m' or '1h'."
+            f"Unable to parse {value!r} as a duration. Use numbers with units s, m or h, such "
+            "as '90s', '10m' or '1h30m', or a number of seconds without a unit."
         )
-    seconds = float(match.group(1)) * _UNIT_SECONDS[match.group(2)]
+    parts = _DURATION_PART.findall(text)
+    if parts:
+        seconds = sum(float(number) * _UNIT_SECONDS[unit] for number, unit in parts)
+    else:
+        seconds = float(text)
     if seconds <= 0:
         raise argparse.ArgumentTypeError(f"Duration must be positive, got {value!r}.")
     if seconds > timedelta.max.total_seconds():
@@ -50,12 +56,12 @@ def _parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "-t",
         "--timeout",
-        default="10m",
+        default="30m",
         type=parse_duration,
         metavar="DURATION",
         help=(
             "Time to keep the server alive after the most recent request, such as '90s', '10m' "
-            "or '1h'. A number without a unit is seconds. (default: %(default)s)"
+            "or '1h30m'. A number without a unit is seconds. (default: %(default)s)"
         ),
     )
     parser.add_argument(
