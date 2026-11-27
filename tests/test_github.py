@@ -359,7 +359,7 @@ def test_fetch_read_error(error):
         ("https://api.github.com/repositories/1/commits/main", True),
         ("https://example.com/commits/main", False),
         ("http://api.github.com/repositories/1/commits/main", False),
-        ("https://api.github.com.evil.example/commits/main", False),
+        ("https://api.github.com.example.com/commits/main", False),
     ],
 )
 def test_redirect_authorization(location, keeps_auth):

@@ -10,9 +10,10 @@ import time
 import pytest
 
 from gh_htmlpreview.exceptions import NotFound, UpstreamError
-from gh_htmlpreview.server import PreviewServer, content_type, normalize_path
+from gh_htmlpreview.server import PreviewServer, content_type, normalize_path, not_found_page
 
 TARGET = "docs/report.html"
+REPO_COMMIT = "octo/repo@3f2c1a9"
 FILES = {
     "docs/report.html": b"<html>report</html>",
     "docs/style.css": b"body {}",
@@ -58,7 +59,7 @@ def source():
 
 @pytest.fixture
 def server(source):
-    with running(PreviewServer(source, TARGET)) as server:
+    with running(PreviewServer(source, TARGET, REPO_COMMIT)) as server:
         yield server
 
 
@@ -97,7 +98,7 @@ def test_url(server):
 
 
 def test_url_quotes_path(source):
-    server = PreviewServer(source, "my file.html")
+    server = PreviewServer(source, "my file.html", REPO_COMMIT)
     server.server_close()
     assert server.url == f"http://127.0.0.1:{server.port}/my%20file.html"
 
@@ -107,13 +108,6 @@ def test_head(server):
     assert status == 200
     assert body == b""
     assert headers["content-length"] == str(len(FILES["docs/report.html"]))
-
-
-def test_root_redirects_to_target(server):
-    for path in ["/", "/?x=1"]:
-        status, headers, _ = request(server, path)
-        assert status == 302
-        assert headers["location"] == "/docs/report.html"
 
 
 @pytest.mark.parametrize(
@@ -129,6 +123,8 @@ def test_root_redirects_to_target(server):
         ("/my%20file.html", "my file.html"),
         ("/docs/sub/", "docs/sub/index.html"),
         ("//index.html", "index.html"),
+        ("/", "index.html"),
+        ("/?x=1", "index.html"),
     ],
 )
 def test_asset_paths(server, path, expected):
@@ -145,7 +141,6 @@ def test_asset_paths(server, path, expected):
         "/%2e%2e/index.html",
         "/docs/%2E%2E/%2e%2e/index.html",
         "/..%2findex.html",
-        "/.",
     ],
 )
 def test_escaping_root(server, source, path):
@@ -156,15 +151,33 @@ def test_escaping_root(server, source, path):
 
 @pytest.mark.parametrize("path", ["/docs", "/docs/", "/missing.html", "/img/"])
 def test_not_found(server, path):
-    status, headers, body = request(server, path)
+    assert request(server, path)[0] == 404
+
+
+def test_not_found_page():
+    with running(PreviewServer(DictSource({}), TARGET, REPO_COMMIT)) as server:
+        status, headers, body = request(server, "/")
     assert status == 404
-    assert headers["content-type"] == "text/plain; charset=utf-8"
-    assert body == b"Not found.\n"
+    assert headers["content-type"] == "text/html; charset=utf-8"
+    assert body.decode() == (
+        "<!doctype html>\n"
+        "<title>Not found</title>\n"
+        "<h1>Not found</h1>\n"
+        "<p>This server is previewing "
+        '<a href="/docs/report.html"><code>docs/report.html</code></a>'
+        " from <code>octo/repo@3f2c1a9</code>.</p>\n"
+    )
+
+
+def test_not_found_page_escapes():
+    page = not_found_page('a&b/<x>".html', "o&o/r<r>@3f2c1a9")
+    assert '<a href="/a%26b/%3Cx%3E%22.html"><code>a&amp;b/&lt;x&gt;&quot;.html</code></a>' in page
+    assert " from <code>o&amp;o/r&lt;r&gt;@3f2c1a9</code>." in page
 
 
 def test_log_escapes_control_characters(source, capsys):
     source.errors["\x1b[31mred.html"] = UpstreamError("failed")
-    with running(PreviewServer(source, TARGET)) as server:
+    with running(PreviewServer(source, TARGET, REPO_COMMIT)) as server:
         assert request(server, "/%1b[31mred.html")[0] == 502
     err = capsys.readouterr().err
     assert "\x1b" not in err
@@ -196,12 +209,12 @@ def test_common_headers(server, path, method):
     [
         "localhost:{port}",
         "LOCALHOST:{port}",
-        "evil.example:{port}",
-        "evil.example",
+        "example.com:{port}",
+        "example.com",
         "127.0.0.1",
         "localhost",
         "127.0.0.1:{other}",
-        "127.0.0.1.evil.example:{port}",
+        "127.0.0.1.example.com:{port}",
         "[::1]:{port}",
         "",
         None,
@@ -212,9 +225,17 @@ def test_forbidden_hosts(server, source, host, method):
     host = host if host is None else host.format(port=server.port, other=server.port + 1)
     status, _, body = request(server, "/docs/style.css", method=method, host=host)
     assert status == 403
-    expected = f"Forbidden host. Open http://127.0.0.1:{server.port}/ instead.\n".encode()
+    expected = (
+        f"Forbidden host. Open http://127.0.0.1:{server.port}/docs/style.css instead.\n".encode()
+    )
     assert body == (b"" if method == "HEAD" else expected)
     assert source.calls == Counter()
+
+
+def test_forbidden_host_absolute_target(server):
+    status, _, body = request(server, "http://example.com/x", host="example.com")
+    assert status == 403
+    assert body == f"Forbidden host. Open http://127.0.0.1:{server.port}/ instead.\n".encode()
 
 
 def test_bare_host_on_port_80(source):
@@ -223,7 +244,7 @@ def test_bare_host_on_port_80(source):
         def port(self) -> int:
             return 80
 
-    with running(Port80Server(source, TARGET)) as server:
+    with running(Port80Server(source, TARGET, REPO_COMMIT)) as server:
         status, _, _ = request(server, "/docs/report.html", host="127.0.0.1")
     assert status == 200
 
@@ -294,7 +315,7 @@ def test_content_type(path, expected):
 @pytest.mark.parametrize("path", ["/a.css", "/a.svg", "/a.wasm"])
 def test_content_type_header(source, path):
     source.files[path[1:]] = b""
-    with running(PreviewServer(source, TARGET)) as server:
+    with running(PreviewServer(source, TARGET, REPO_COMMIT)) as server:
         _, headers, _ = request(server, path)
     assert headers["content-type"] == content_type(path)
 
@@ -306,6 +327,11 @@ def test_content_type_header(source, path):
         ("/a/../b.html", "b.html"),
         ("/a/", "a/index.html"),
         ("/", "index.html"),
+        ("/.", "index.html"),
+        ("/a/.", "a/index.html"),
+        ("/a/..", "index.html"),
+        ("/a/%2E%2E", "index.html"),
+        ("/a/b/..", "a/index.html"),
         ("/..", None),
         ("/a/../..", None),
         ("/a/%2e%2e/%2e%2e/b", None),
@@ -339,7 +365,7 @@ def test_upstream_error_not_cached(server, source):
 
 def test_seeded_target_not_fetched(source):
     seed = {TARGET: b"<html>seeded</html>"}
-    with running(PreviewServer(source, TARGET, seed=seed)) as server:
+    with running(PreviewServer(source, TARGET, REPO_COMMIT, seed=seed)) as server:
         status, _, body = request(server, "/docs/report.html")
     assert (status, body) == (200, b"<html>seeded</html>")
     assert source.calls == Counter()
@@ -356,7 +382,7 @@ def test_fixed_port(source):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    with running(PreviewServer(source, TARGET, port=port)) as server:
+    with running(PreviewServer(source, TARGET, REPO_COMMIT, port=port)) as server:
         assert server.port == port
         assert request(server, "/docs/report.html")[0] == 200
 
@@ -376,7 +402,7 @@ def test_fixed_port_in_use(source, family, address):
         other.bind((address, 0))
         other.listen()
         with pytest.raises(OSError) as exc_info:
-            PreviewServer(source, TARGET, port=other.getsockname()[1])
+            PreviewServer(source, TARGET, REPO_COMMIT, port=other.getsockname()[1])
     assert exc_info.value.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", None))
 
 
@@ -384,7 +410,7 @@ def test_fixed_port_in_use(source, family, address):
 
 
 def test_idle_shutdown(source):
-    server = PreviewServer(source, TARGET)
+    server = PreviewServer(source, TARGET, REPO_COMMIT)
     start = time.monotonic()
     server.serve_until_idle(0.3)
     elapsed = time.monotonic() - start
@@ -393,7 +419,7 @@ def test_idle_shutdown(source):
 
 
 def test_requests_delay_idle_shutdown(source):
-    server = PreviewServer(source, TARGET)
+    server = PreviewServer(source, TARGET, REPO_COMMIT)
     shutdown = threading.Event()
 
     def serve():
@@ -420,7 +446,7 @@ def test_request_in_progress_delays_idle_shutdown():
         release.wait(10)
         return b"slow"
 
-    server = PreviewServer(slow_source, TARGET)
+    server = PreviewServer(slow_source, TARGET, REPO_COMMIT)
     shutdown = threading.Event()
 
     def serve():
@@ -444,11 +470,11 @@ def test_request_in_progress_delays_idle_shutdown():
 
 @pytest.mark.parametrize(
     "refused",
-    [{"host": "evil.example"}, {"headers": {"Service-Worker": "script"}}],
+    [{"host": "example.com"}, {"headers": {"Service-Worker": "script"}}],
     ids=["forbidden host", "service worker"],
 )
 def test_refused_requests_dont_delay_idle_shutdown(source, refused):
-    server = PreviewServer(source, TARGET)
+    server = PreviewServer(source, TARGET, REPO_COMMIT)
     shutdown = threading.Event()
 
     def serve():
@@ -469,7 +495,7 @@ def test_refused_requests_dont_delay_idle_shutdown(source, refused):
 
 
 def test_keyboard_interrupt_shuts_down(source, monkeypatch):
-    server = PreviewServer(source, TARGET)
+    server = PreviewServer(source, TARGET, REPO_COMMIT)
 
     def interrupt(_seconds):
         raise KeyboardInterrupt

@@ -7,8 +7,8 @@ A GitHub CLI extension or a standalone Python CLI tool for serving a preview of 
 Handy for browsing things like:
 
 - Static sites and built docs, especially in private repos
-- Notebook and report exports from [Jupyter](https://jupyter.org/), [marimo](https://marimo.io/), [Quarto](https://quarto.org/), or R Markdown
-- Interactive charts exported to HTML, from libraries like Plotly, Bokeh, or Altair
+- Notebook and report exports from [Jupyter](https://jupyter.org/), [marimo](https://marimo.io/), [Quarto](https://quarto.org/), or [R Markdown](https://rmarkdown.rstudio.com/)
+- Interactive charts exported to HTML, from libraries like [Plotly](https://plotly.com/), [Bokeh](https://bokeh.org/), or [Altair](https://altair-viz.github.io/)
 - HTML prototypes and LLM-generated artifacts
 
 > [!IMPORTANT]
@@ -119,19 +119,19 @@ The tool will automatically open your browser to the served page. You can config
 
 Use `-n`/`--no-browser` to print the URL without opening a browser.
 
-In an SSH session, or on Linux without a display, the default browser isn't opened. Over SSH, it prints the port-forwarding command to run on your own machine, such as `ssh -L 53817:127.0.0.1:53817 HOST`. Forward to the same port number and open `http://127.0.0.1:PORT`, not `localhost`, or the server refuses the request. You can use `-p`/`--port` to specify a port in order to keep the same port between sessions.
+In an SSH session, or on Linux without a display, the default browser isn't opened. Over SSH, it prints the port-forwarding command to run on your own machine, such as `ssh -L 53817:127.0.0.1:53817 HOST`. Forward to the same port number and open the printed URL as is, with `127.0.0.1` rather than `localhost`, or the server refuses the request. You can use `-p`/`--port` to specify a port in order to keep the same port between sessions.
 
 ## Security
 
 The previewed page's JavaScript runs in your browser like any website's. **Only preview pages from repositories you trust as much as a website you'd visit.** Because browsers don't separate cookies by port, that JavaScript can read and set cookies of other apps served on `127.0.0.1`, other than HttpOnly ones. Storage the page leaves behind, such as `localStorage`, can also be seen by later web applications served at the same port.
 
-The design of this tool takes the following precautions to avoid security problems:
+This tool takes the following security precautions:
 
-- The server listens on `127.0.0.1` only (and not `0.0.0.0`, which would allow other devices to connect).
+- The server listens on `127.0.0.1` only. It does not listen on `0.0.0.0`, which would allow other devices to connect.
+- Requests must have the `Host` header `127.0.0.1:{port}`, which blocks DNS-rebinding attacks from reading repository content through the server. It also refuses `localhost`, in order to keep the cookies of other apps running on `localhost` isolated from the previewed page.
 - There is an idle timeout after which the server is shut down. By default, it is 10 minutes.
-- Requests must have the `Host` header `127.0.0.1:{port}`, which blocks DNS-rebinding attacks from reading repository content through the server.
 - Requests from other sites are refused, based on the `Sec-Fetch-Site` header that browsers send. This includes other apps served on `127.0.0.1`.
-- JavaScript service workers can't be registered, so a previewed page can't leave code behind that intercepts a later session.
+- JavaScript service workers can't be registered, so a previewed page can't leave code behind that intercepts something else served on that port later.
 - A session serves one repository at one commit. It does not mix commits or serve files across repositories.
 - Your auth token is only sent to GitHub and is not accessible to the browser.
 
