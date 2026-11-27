@@ -7,8 +7,8 @@ A GitHub CLI extension or a standalone Python CLI tool for serving a preview of 
 Handy for browsing things like:
 
 - Static sites and built docs, especially in private repos
-- Notebook and report exports from [Jupyter](https://jupyter.org/), [marimo](https://marimo.io/), [Quarto](https://quarto.org/), or R Markdown
-- Interactive charts exported to HTML, from libraries like Plotly, Bokeh, or Altair
+- Notebook and report exports from [Jupyter](https://jupyter.org/), [marimo](https://marimo.io/), [Quarto](https://quarto.org/), or [R Markdown](https://rmarkdown.rstudio.com/)
+- Interactive charts exported to HTML, from libraries like [Plotly](https://plotly.com/), [Bokeh](https://bokeh.org/), or [Altair](https://altair-viz.github.io/)
 - HTML prototypes and LLM-generated artifacts
 
 > [!IMPORTANT]
