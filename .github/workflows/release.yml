@@ -109,7 +109,7 @@ jobs:
     name: Upload package to Test PyPI
     needs: build-and-inspect-package
     runs-on: ubuntu-latest
-    environment: release  # Required for PyPI trusted publishing
+    environment: testpypi  # Required for PyPI trusted publishing
     permissions:
       id-token: write  # Required for PyPI trusted publishing
 
@@ -130,7 +130,7 @@ jobs:
     needs: upload-to-test-pypi
     if: ${{ !inputs.dry-run }}
     runs-on: ubuntu-latest
-    environment: release  # Required for PyPI trusted publishing
+    environment: pypi  # Required for PyPI trusted publishing
     permissions:
       id-token: write  # Required for PyPI trusted publishing
 
