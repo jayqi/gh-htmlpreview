@@ -31,8 +31,10 @@ def parse_duration(value: str) -> float:
         seconds = float(text)
     if seconds <= 0:
         raise argparse.ArgumentTypeError(f"Duration must be positive, got {value!r}.")
-    if seconds > timedelta.max.total_seconds():
-        raise argparse.ArgumentTypeError(f"Duration is too long, got {value!r}.")
+    try:
+        timedelta(seconds=seconds)
+    except OverflowError:
+        raise argparse.ArgumentTypeError(f"Duration is too long, got {value!r}.") from None
     return seconds
 
 

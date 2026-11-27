@@ -55,7 +55,7 @@ def test_parse_duration_not_positive(value):
         parse_duration(value)
 
 
-@pytest.mark.parametrize("value", ["100000000000000", "9" * 400])
+@pytest.mark.parametrize("value", ["86400000000000", "24000000000h", "100000000000000", "9" * 400])
 def test_parse_duration_too_long(value):
     with pytest.raises(argparse.ArgumentTypeError, match="Duration is too long"):
         parse_duration(value)
