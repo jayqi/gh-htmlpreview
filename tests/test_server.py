@@ -209,12 +209,12 @@ def test_common_headers(server, path, method):
     [
         "localhost:{port}",
         "LOCALHOST:{port}",
-        "evil.example:{port}",
-        "evil.example",
+        "example.com:{port}",
+        "example.com",
         "127.0.0.1",
         "localhost",
         "127.0.0.1:{other}",
-        "127.0.0.1.evil.example:{port}",
+        "127.0.0.1.example.com:{port}",
         "[::1]:{port}",
         "",
         None,
@@ -230,6 +230,12 @@ def test_forbidden_hosts(server, source, host, method):
     )
     assert body == (b"" if method == "HEAD" else expected)
     assert source.calls == Counter()
+
+
+def test_forbidden_host_absolute_target(server):
+    status, _, body = request(server, "http://example.com/x", host="example.com")
+    assert status == 403
+    assert body == f"Forbidden host. Open http://127.0.0.1:{server.port}/ instead.\n".encode()
 
 
 def test_bare_host_on_port_80(source):
@@ -324,6 +330,7 @@ def test_content_type_header(source, path):
         ("/.", "index.html"),
         ("/a/.", "a/index.html"),
         ("/a/..", "index.html"),
+        ("/a/%2E%2E", "index.html"),
         ("/a/b/..", "a/index.html"),
         ("/..", None),
         ("/a/../..", None),
@@ -463,7 +470,7 @@ def test_request_in_progress_delays_idle_shutdown():
 
 @pytest.mark.parametrize(
     "refused",
-    [{"host": "evil.example"}, {"headers": {"Service-Worker": "script"}}],
+    [{"host": "example.com"}, {"headers": {"Service-Worker": "script"}}],
     ids=["forbidden host", "service worker"],
 )
 def test_refused_requests_dont_delay_idle_shutdown(source, refused):
