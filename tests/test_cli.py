@@ -31,7 +31,9 @@ FILES = {
         ("600", 600),
         ("1.5m", 90),
         ("0.5", 0.5),
-        ("10M", 600),
+        ("1h30m", 5400),
+        ("2m30s", 150),
+        ("1h0.5m", 3630),
         (" 10m ", 600),
     ],
 )
@@ -39,7 +41,9 @@ def test_parse_duration(value, expected):
     assert parse_duration(value) == expected
 
 
-@pytest.mark.parametrize("value", ["", "m", "10d", "10 m", "1h30m", "-5", "1e3", "ten"])
+@pytest.mark.parametrize(
+    "value", ["", "m", "10d", "10 m", "10M", "1H", "1h 30m", "1h30", "-5", "1e3", "ten"]
+)
 def test_parse_duration_invalid(value):
     with pytest.raises(argparse.ArgumentTypeError, match="Unable to parse"):
         parse_duration(value)
@@ -51,7 +55,7 @@ def test_parse_duration_not_positive(value):
         parse_duration(value)
 
 
-@pytest.mark.parametrize("value", ["100000000000000", "9" * 400])
+@pytest.mark.parametrize("value", ["86400000000000", "24000000000h", "100000000000000", "9" * 400])
 def test_parse_duration_too_long(value):
     with pytest.raises(argparse.ArgumentTypeError, match="Duration is too long"):
         parse_duration(value)
