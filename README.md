@@ -29,6 +29,8 @@ gh extension install jayqi/gh-htmlpreview
 
 The extension needs [uv](https://docs.astral.sh/uv/) or Python 3.11 or newer on your `PATH`. With uv, it finds or downloads a suitable Python itself.
 
+The extension tracks the `main` branch; update it with `gh extension upgrade htmlpreview`. To stay on a release instead, install with `--pin`, such as `--pin v0.1.0`.
+
 ### As a standalone CLI tool
 
 As a Python package from PyPI, with uv:
